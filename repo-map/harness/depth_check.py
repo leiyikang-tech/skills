@@ -11,7 +11,10 @@ Every check is a PURE check - no LLM judgment in the pass/fail decision (same
 principle as gates.py:4). Returns exit code 0 (PASS), 1 (FAIL -> rework), or
 2 (BLOCKED -> artifact missing, cannot judge).
 
-  depth_check.py --repo <path> --artifact <AGENTS.md|PROFILE.md|ATOMIC-CAPABILITIES.md> [--out <dir>] [--min-anchors N]
+  depth_check.py --repo <path> [--out <dir>] [--min-anchors N]
+
+  Scans every .md analysis artifact under --out (default: the repo root) and
+  verifies each carries resolvable `path:LINE` anchors.
 
 Artifact conventions (what it verifies):
 - AGENTS.md          : ARCHITECTURE / CODE MAP / KEY PATHS sections should anchor
