@@ -29,9 +29,9 @@ Grammars live in the skill's own venv (compiled wheels, no runtime download):
 ```
 
 `./refcode` (bash launcher) auto-selects `.venv/bin/python`, falling back to
-`python3`. 27 grammars installed: python, rust, javascript, typescript, tsx, go,
+`python3`. 25 language grammars installed: python, rust, javascript, typescript, go,
 java, c, cpp, ruby, php, c_sharp, bash, scala, haskell, kotlin, swift, lua,
-elixir, json, yaml, toml, html, css, sql, markdown.
+elixir, json, yaml, toml, html, css, sql, markdown (see `requirements.txt`).
 
 > If a grammar host is unreachable, grammars are **per-language PyPI wheels**
 > (`tree-sitter-<lang>`), not the runtime-downloading `tree-sitter-language-pack`.

@@ -27,7 +27,7 @@ bash install.sh REFCODE_HOME=/opt/skills/refcode NO_VENV=1   # custom dir, no ve
 ```
 
 Grammars are compiled PyPI wheels (`tree-sitter-<lang>`, see `requirements.txt`) —
-no runtime download. 26 languages.
+no runtime download. 25 languages.
 
 ## Use
 
