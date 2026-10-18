@@ -18,7 +18,7 @@ store symbols + BM25 body windows). Nothing is downloaded until you index.
 
 ## Standalone commands
 
-Installed on PATH by the `refcode` installer (`~/.local/bin`):
+Installed on PATH (`~/.local/bin`):
 
 ```bash
 refcode-build                       # == refcode-build index --all  (index every registered corpus)
@@ -26,19 +26,18 @@ refcode-build index <slug> <url> [--sha <sha>] [--licence L]   # one project
 refcode-build index --all [--limit N] [--dry-run]              # batch
 refcode-build add --from seed/corpora.json                     # register from a manifest
 refcode-build refresh --dry-run                                # is each pin stale?
-refcode-build dump --out refcode.dump.sql                      # git-friendly text export
+refcode-build dump --out refcode.dump.sql                      # full-content SQL export (large; inspect/backup)
 refcode-build stats                                            # what's in the DB
 ```
 
 All map onto the `refcode` engine (`corpus add`, `index`, `refresh`, `dump`,
-`stats`); `refcode-build` adds no logic, it is the write-side alias. Engine:
-`{{REFCODE_HOME}}/refcode`.
+`stats`); `refcode-build` adds no logic, it is the write-side alias.
 
 ## The loop
 
 ```bash
 # 0. one-time: register the seed corpora (definitions only, no source)
-refcode-build add --from {{REFCODE_HOME}}/seed/corpora.json
+refcode-build add --from <skill>/seed/corpora.json
 
 # 1. dry-run: see exactly what a full build would clone
 refcode-build index --all --dry-run
@@ -48,7 +47,7 @@ refcode-build index --all
 
 # 3. confirm + share
 refcode-build stats
-refcode-build dump --out refcode.dump.sql     # commit THIS (text), not the .db
+refcode-build dump --out refcode.dump.sql     # inspect/backup (large); NOT a git artifact
 ```
 
 ## DB + sharing
@@ -58,8 +57,8 @@ refcode-build dump --out refcode.dump.sql     # commit THIS (text), not the .db
 - Clone cache: `${REFCODE_REPOS:-~/.refcode/repos/<slug>}`.
 - **Share the definition, never the index.** Commit the manifest
   (`seed/corpora.json`: url + 40-hex sha + licence + use_policy, a few KB,
-  rebuildable byte-identical). A 20 MB binary `.db` goes in a GitHub *release
-  asset* at most, never in git.
+  rebuildable byte-identical). The built index is a binary `.db` of tens of MB —
+  a GitHub *release asset* at most, never in git.
 
 ## Adding a project
 

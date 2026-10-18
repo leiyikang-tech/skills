@@ -62,7 +62,7 @@ $R route /path/to/target/repo
 $R refresh --dry-run                     # git ls-remote -> STALE/fresh per pin
 $R stats
 $R verify report.md                      # check every [slug] path:line peer-anchor resolves
-$R dump --out refcode.dump.sql           # git-friendly text dump
+$R dump --out refcode.dump.sql           # full-content SQL text export (large: ~90MB/21 corpora)
 ```
 
 ## Where the database lives
@@ -73,15 +73,17 @@ $R dump --out refcode.dump.sql           # git-friendly text dump
   `/root/.sisyphus/db/refcode.db` (sibling of repo-map's `analysis.db`).
 - Clone cache: `$REFCODE_REPOS`, else `~/.refcode/repos/<slug>`.
 
-**Can it live on GitHub?** Yes — but push the *manifest + a text dump*, not the
-binary index. This is exactly XERJ's corpus-hub rule ("share the definition, not
-the index"):
+**Can it live on GitHub?** Yes — but share the *definition*, not the index. This
+is exactly XERJ's corpus-hub rule:
 
-- ✅ commit `seed/corpora.json` (a few hundred bytes: url + sha + licence) and
-  `refcode dump --out refcode.dump.sql` (diffable SQL). Anyone rebuilds byte-identical
-  indices with `corpus add` + `index`.
-- ✅ or publish the binary `.db` as a **release asset** (not in git history).
+- ✅ commit `seed/corpora.json` / `corpus export` (a few KB: url + 40-hex sha +
+  licence + use_policy). Anyone rebuilds byte-identical indices with
+  `corpus add` + `index`.
+- ✅ publish the built index as a **release asset** (`gh release upload <tag>
+  refcode.db`) — ready to query, never in git history.
 - ❌ do not commit the live WAL `.db` — binary, churns, merges badly.
+- ⚠️ `dump` is a **full-content** text export (measured ~90MB for a 21-corpus
+  build), so it is *not* a git artifact either — use it for inspection/backup.
 
 ## Honest limits
 

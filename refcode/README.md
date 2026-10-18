@@ -26,6 +26,9 @@ bash install.sh                     # -> $HOME/.agents/skills/refcode (+ venv + 
 bash install.sh REFCODE_HOME=/opt/skills/refcode NO_VENV=1   # custom dir, no venv
 ```
 
+The installer also drops two **standalone commands** into `${BIN_DIR:-$HOME/.local/bin}`:
+`refcode` (full CLI) and `refcode-build` (build front door).
+
 Grammars are compiled PyPI wheels (`tree-sitter-<lang>`, see `requirements.txt`) —
 no runtime download. 25 languages.
 
@@ -73,6 +76,8 @@ $R dump --out refcode.dump.sql
 SKILL.md              the agent-facing skill
 refcode               launcher (path-relative; prefers ./.venv)
 refcode.py            the engine (extract / classify / register / query / verify / refresh)
+bin/refcode           standalone command template (materialized to $BIN_DIR)
+bin/refcode-build     write-side command template (build front door)
 references/refcode.sql  the schema
 seed/corpora.json     the seed corpus table (curated domain -> projects)
 install.sh            template materializer
