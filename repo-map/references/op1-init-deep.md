@@ -66,6 +66,7 @@ find . -type f \( -name "AGENTS.md" -o -name "CLAUDE.md" \) ! -path '*/node_modu
 - **symbol graph first** (build the deep-read substrate before any claim):
   ```bash
   codegraph index <repo>   # then query/callers/callees/impact for load-bearing units
+                           # external dep (npm @colbymchenry/codegraph, MIT); verified 1.6.2
   ```
 - typed repos (TS/Go/Java): `lsp_symbols` scope=document on main entry; workspace
   symbols for class/interface/function; `lsp_find_references` on top exports for centrality

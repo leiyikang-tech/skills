@@ -42,6 +42,15 @@ codegraph callers <sym> / callees <sym>   # call-graph traversal (who calls / wh
 codegraph impact <sym>          # blast radius of a change
 codegraph context "<task>"      # build code context for a task (markdown)
 ```
+
+> **Verified 2026-10-18** (XERJ, codegraph **1.6.2**): `codegraph index` built 1,144 files /
+> 28,414 nodes / 93,269 edges in 4.1s; `query`/`callers`/`callees`/`impact` all resolve
+> real `file:line` anchors (e.g. `Provider::rerank` → lib.rs:1100). codegraph is an
+> **external npm dependency** (`@colbymchenry/codegraph`, MIT) — not bundled. Install:
+> `npm install -g @colbymchenry/codegraph@latest` (as root, re-run to completion so the
+> per-platform optionalDependency reconciles). Its MCP server is registered in opencode
+> (`mcp.codegraph` = `codegraph serve --mcp`). If `codegraph` is missing, the installer
+> (`repo-map/install.sh`) prints a warning, not a failure.
 `codegraph` returns **verbatim symbol source grouped by file** — it is Read-equivalent,
 so there is no excuse to fall back to README-level summaries. Adoption rule (from
 codegraph's own contract): *"reach for raw grep/read only to confirm a specific

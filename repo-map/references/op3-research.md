@@ -78,6 +78,11 @@ For the self-project, build a symbol graph first (`codegraph index <repo>`), the
 read real bodies via `codegraph query/callers/callees` — a capability that cannot
 be traced to a real symbol + line is a hypothesis, not a fact.
 
+> **Verified 2026-10-18** (codegraph 1.6.2, indexed XERJ): 28,414 nodes / 93,269 edges;
+> `query/callers/callees/impact` resolve real `file:line`. External npm dep (MIT,
+> `@colbymchenry/codegraph`) — not bundled; its MCP server is registered in opencode
+> (`codegraph serve --mcp`).
+
 ### Cross-project reference retrieval (`refcode`) — how did the PEERS solve it?
 
 `codegraph` indexes **one** repo (the self-project). To compare mechanisms you also

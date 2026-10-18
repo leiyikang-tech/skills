@@ -68,4 +68,27 @@ echo "  ANALYSIS_DB=$ANALYSIS_DB"
 echo "  REPOS_DIR=$REPOS_DIR"
 echo "  KNOWLEDGE_REPO_URL=$KNOWLEDGE_REPO_URL"
 echo "  KNOWLEDGE_REPO_DIR=$KNOWLEDGE_REPO_DIR"
+
+# ---- dependency check (non-fatal: warn, never fail the install) ----
+# repo-map's playbooks rely on two external tools that are NOT bundled:
+#   codegraph  self-project symbol graph (npm @colbymchenry/codegraph, MIT)
+#   refcode    cross-project reference retrieval (sibling skill, leiyikang-tech/skills)
+warn_dep() {
+  local name="$1" hint="$2"
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "  WARN  $name: MISSING -> $hint"
+    return 1
+  fi
+  echo "  ok    $name: $(command -v "$name")"
+  return 0
+}
+missing=0
+warn_dep codegraph "npm install -g @colbymchenry/codegraph@latest" || missing=1
+warn_dep refcode  "bash <refcode-dir>/install.sh" || missing=1
+if [ "$missing" -ne 0 ]; then
+  echo "  NOTE: missing tools above are required by repo-map's playbooks (codegraph for the"
+  echo "        self-project symbol graph, refcode for peer file:line evidence). Until they are"
+  echo "        installed, Op1/Op2/Op3 fall back to explore agents for those steps."
+fi
+
 echo "OK: SKILL.md + references + harness materialized with real paths."
