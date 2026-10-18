@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# refcode launcher - prefers the skill's venv (tree-sitter grammars live there).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$here/.venv/bin/python" ]]; then
+  exec "$here/.venv/bin/python" "$here/refcode.py" "$@"
+fi
+exec python3 "$here/refcode.py" "$@"

@@ -11,6 +11,7 @@
 |------|------|------|
 | [`repo-map/`](repo-map/) | **repo-map** | 对一个新开源项目做端到端分析（5 步管线：init-deep → Profile → Comparative → Gap/Opportunity → Persist），含 harness 确定性质量门禁与深挖锚点机制 |
 | [`awesome-map/`](awesome-map/) | **awesome-map** | 分析一个 awesome-list 的**成员项目与论文**——解析→按分析价值打分排序→纳入 waitlist→按序自动深挖。薄编排器，驱动 repo-map 的 awesome-list 模式 |
+| [`refcode/`](refcode/) | **refcode** | 把开源项目抽取成检索文档（tree-sitter 符号 + BM25 正文窗口）存进单个 SQLite（FTS5）——跨项目参考代码检索，让分析/编码 agent 能用 `file:line` 引用同行的真实实现。抽出、分类、注册、查询四能力，是 repo-map Op3 的跨项目证据来源 |
 
 ## 快速安装
 
@@ -44,6 +45,23 @@ REPO_MAP_HOME=~/.sisyphus/repo-map bash install.sh
 > awesome-map 依赖 **repo-map** 已安装（它驱动 repo-map 的 awesome-list 模式）。
 > `REPO_MAP_HOME` 需指向已安装的 repo-map 技能目录。
 
+### refcode
+
+```bash
+cd refcode
+bash install.sh          # -> ~/.agents/skills/refcode（自带 venv + tree-sitter 语法轮子）
+```
+
+refcode 自带独立 venv（26 种语言的 tree-sitter 语法，编译轮子、无运行时下载）。
+安装到自定义目录 / 跳过 venv：
+
+```bash
+REFCODE_HOME=/opt/skills/refcode NO_VENV=1 bash install.sh
+```
+
+数据库默认落在 `${REFCODE_DB:-~/.refcode/refcode.db}`（单个 SQLite 文件）。
+共享语料定义在 `refcode/seed/corpora.json`（可提交到 git，几百字节、可复现）。
+
 ## 占位符
 
 安装器在安装时替换以下 `{{PLACEHOLDER}}` 令牌：
@@ -55,6 +73,7 @@ REPO_MAP_HOME=~/.sisyphus/repo-map bash install.sh
 | `{{REPOS_DIR}}` | 项目克隆目录 |
 | `{{KNOWLEDGE_REPO_URL}}` | 知识库 git 仓库 URL（repo-map Op5 持久化目标） |
 | `{{KNOWLEDGE_REPO_DIR}}` | 知识库本地克隆路径 |
+| `{{REFCODE_HOME}}` | refcode 技能的安装目录 |
 
 ## 隐私与脱敏
 

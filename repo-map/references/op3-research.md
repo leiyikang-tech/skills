@@ -78,6 +78,48 @@ For the self-project, build a symbol graph first (`codegraph index <repo>`), the
 read real bodies via `codegraph query/callers/callees` — a capability that cannot
 be traced to a real symbol + line is a hypothesis, not a fact.
 
+### Cross-project reference retrieval (`refcode`) — how did the PEERS solve it?
+
+`codegraph` indexes **one** repo (the self-project). To compare mechanisms you also
+need the **peers' actual implementations**, not their READMEs. `refcode`
+(`/root/.agents/skills/refcode/`) is the cross-project retrieval layer: a single
+SQLite DB (FTS5 BM25 + tree-sitter symbols) holding many open-source projects at
+pinned commits. It is the portable core of XERJ's corpus pipeline, and it is how a
+mechanism claim gets a *peer* `file:line` instead of an assertion.
+
+```bash
+R=/root/.agents/skills/refcode/refcode          # REFCODE_DB default ~/.refcode/refcode.db
+
+# 1) which reference corpora does THIS project need? (reads its lockfiles)
+$R route <target-repo>                           # dep-name matches -> corpus slugs
+# 2) ensure they are indexed (idempotent; clones shallow at the pinned sha)
+$R index <slug> <path|git-url> [--sha <40hex>] [--licence <spdx>]
+$R corpus add --from /root/.agents/skills/refcode/seed/corpora.json   # seed table
+# 3) retrieve a peer implementation, symbols first then BM25 passages
+$R def <symbol>                                  # exact symbol -> file:line + signature
+$R query "how is X computed" -k 5                # symbols first, then body windows
+$R query "..." --project <slug> --json           # scoped / machine-readable
+```
+
+**Discipline:** a peer claim in the analysis must cite a `refcode` hit
+(`[slug] path:line`), never "competitor X does Y" from memory. Respect
+`use_policy` — `approach-only` corpora (AGPL/SSPL/BUSL/GPL/MPL) are read for
+design, **never copied**. Seed corpus table:
+`/root/.agents/skills/refcode/seed/corpora.json`; full mechanism + limits:
+`/root/.agents/skills/refcode/SKILL.md`.
+
+Append this to every **competitor** research prompt in Op3 (alongside the forcing
+prompt above):
+
+```
+Before asserting how a competitor works, retrieve its real code:
+  refcode def <symbol>   /   refcode query "<mechanism>" --project <slug>
+Cite every mechanism claim as `[<slug>] <path>:<line>`. If refcode has no hit for
+that project, say "not indexed" — do not fall back to memory or the README.
+```
+
+
+
 ## 3.3 Anti-Hallucination — THE core discipline
 
 A large share of a project's "features" is **advertising copy with no substantive
