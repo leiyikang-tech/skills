@@ -24,8 +24,8 @@ own contributors do (`xerj search` / `xerj def`).
 Grammars live in the skill's own venv (compiled wheels, no runtime download):
 
 ```bash
-{{REFCODE_HOME}}/.venv/bin/python --version   # 3.12
-{{REFCODE_HOME}}/.venv/bin/pip freeze | grep tree-sitter
+/root/.agents/skills/refcode/.venv/bin/python --version   # 3.12
+/root/.agents/skills/refcode/.venv/bin/pip freeze | grep tree-sitter
 ```
 
 `./refcode` (bash launcher) auto-selects `.venv/bin/python`, falling back to
@@ -39,7 +39,7 @@ elixir, json, yaml, toml, html, css, sql, markdown (see `requirements.txt`).
 ## Usage
 
 ```bash
-R={{REFCODE_HOME}}/refcode
+R=/root/.agents/skills/refcode/refcode
 
 # 1) index a local folder OR a git URL (shallow clone, optional pinned sha)
 $R index xerj-hub /path/to/xerj/engine/crates/xerj-hub --licence Apache-2.0

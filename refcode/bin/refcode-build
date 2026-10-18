@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# refcode-build — write-side front door to the refcode engine (form/extend the DB).
+# No logic of its own: maps build verbs onto `refcode` and defaults to `index --all`.
+set -euo pipefail
+RC={{REFCODE_HOME}}/refcode
+if [ $# -eq 0 ]; then
+  exec "$RC" index --all
+fi
+case "$1" in
+  add)                          shift; exec "$RC" corpus add "$@" ;;
+  index|refresh|dump|stats)     exec "$RC" "$@" ;;
+  *)
+    echo "refcode-build: verbs: index [--all] | add --from F | refresh | dump | stats" >&2
+    exit 2 ;;
+esac

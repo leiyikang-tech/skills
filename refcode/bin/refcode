@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# refcode — full CLI (extract/classify/register/query). Installed to a bin dir on PATH.
+exec {{REFCODE_HOME}}/refcode "$@"

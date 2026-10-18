@@ -539,29 +539,20 @@ def ensure_clone(url: str, slug: str, sha: str | None) -> Path:
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
-def cmd_index(args, conn: sqlite3.Connection) -> int:
-    ex = Extractor()
-    url = args.url
-    if not url and args.path and re.match(r"^(https?://|git@|ssh://|git://)", args.path):
-        url = args.path
-    if url:
-        args.url = url
-        root = ensure_clone(url, args.slug, args.sha)
-    else:
-        root = Path(args.path).resolve()
+def _index_one(conn, ex, slug, path, url, sha, licence, ask_for):
+    """Index one project. Returns a stats dict. Raises on clone/read failure."""
+    root = ensure_clone(url, slug, sha) if url else Path(path).resolve()
     if not root.exists():
-        print(f"error: path not found: {root}", file=sys.stderr)
-        return 2
-
+        raise FileNotFoundError(root)
     info = classify_project(root, ex)
     # A curated row (from `corpus add`) outranks the heuristic classify().
     prev = conn.execute("SELECT domain,licence,ask_for FROM ref_projects WHERE slug=?",
-                        (args.slug,)).fetchone()
-    domain = (prev["domain"] if prev and prev["domain"] else info["domain"])
-    licence = args.licence or (prev["licence"] if prev else None)
-    ask_for = args.ask_for or (prev["ask_for"] if prev else None)
-    conn.execute("DELETE FROM ref_symbols WHERE project=?", (args.slug,))
-    conn.execute("DELETE FROM ref_body_fts WHERE project=?", (args.slug,))
+                        (slug,)).fetchone()
+    domain = prev["domain"] if prev and prev["domain"] else info["domain"]
+    licence = licence or (prev["licence"] if prev else None)
+    ask_for = ask_for or (prev["ask_for"] if prev else None)
+    conn.execute("DELETE FROM ref_symbols WHERE project=?", (slug,))
+    conn.execute("DELETE FROM ref_body_fts WHERE project=?", (slug,))
 
     nsym = nwin = nfiles = 0
     sym_rows, win_rows = [], []
@@ -579,13 +570,12 @@ def cmd_index(args, conn: sqlite3.Connection) -> int:
         rel = str(fp.relative_to(root))
         nfiles += 1
         for i, (l0, win) in enumerate(windows(text)):
-            win_rows.append((args.slug, rel, lang, i, l0, win))
+            win_rows.append((slug, rel, lang, i, l0, win))
             nwin += 1
         for s in ex.symbols(text, lang):
-            qname = s["name"]
             sym_rows.append((
-                args.slug, f"{rel}:{s['line']}:{s['name']}", s["kind"], s["name"],
-                qname, rel, lang, s["line"], s["end_line"], s["signature"], None,
+                slug, f"{rel}:{s['line']}:{s['name']}", s["kind"], s["name"],
+                s["name"], rel, lang, s["line"], s["end_line"], s["signature"], None,
             ))
             nsym += 1
         if len(sym_rows) >= 5000:
@@ -611,18 +601,58 @@ def cmd_index(args, conn: sqlite3.Connection) -> int:
              domain=excluded.domain, languages=excluded.languages,
              dependency_names=excluded.dependency_names, local_path=excluded.local_path,
              bytes=excluded.bytes, files=excluded.files, symbols=excluded.symbols,
-             windows=excluded.windows, indexed_at=excluded.indexed_at""",
-        (args.slug, args.url, args.sha, licence, domain,
+             windows=excluded.windows, indexed_at=excluded.indexed_at, status='live'""",
+        (slug, url, sha, licence, domain,
          json.dumps(info["languages"]), ask_for,
          json.dumps(info["dependency_names"]), "live", None, str(root),
          info["bytes"], nfiles, nsym, nwin, _now()),
     )
     conn.commit()
-    print(json.dumps({
-        "slug": args.slug, "path": str(root), "domain": info["domain"],
-        "languages": info["languages"][:8], "files": nfiles,
-        "symbols": nsym, "windows": nwin,
-    }, ensure_ascii=False))
+    return {"slug": slug, "path": str(root), "domain": info["domain"],
+            "languages": info["languages"][:8], "files": nfiles,
+            "symbols": nsym, "windows": nwin}
+
+
+def cmd_index(args, conn: sqlite3.Connection) -> int:
+    ex = Extractor()
+    if getattr(args, "all", False):
+        rows = conn.execute(
+            "SELECT slug,url,sha,licence,ask_for FROM ref_projects "
+            "WHERE url IS NOT NULL AND url<>'' ORDER BY slug").fetchall()
+        if args.limit:
+            rows = rows[:args.limit]
+        if args.dry_run:
+            print(json.dumps({"would_index": [r["slug"] for r in rows],
+                              "count": len(rows)}, ensure_ascii=False))
+            return 0
+        done, failed = [], []
+        for r in rows:
+            print(f"[index] {r['slug']} …", file=sys.stderr)
+            try:
+                st = _index_one(conn, ex, r["slug"], None, r["url"], r["sha"],
+                                r["licence"], r["ask_for"])
+                done.append(st["slug"])
+                print(f"[index] {r['slug']}: {st['files']} files / "
+                      f"{st['symbols']} symbols / {st['windows']} windows", file=sys.stderr)
+            except Exception as e:  # network/clone/parse failure must not stop the batch
+                failed.append(r["slug"])
+                print(f"[index] {r['slug']} FAILED: {e}", file=sys.stderr)
+        print(json.dumps({"indexed": len(done), "failed": len(failed),
+                          "done": done, "errors": failed}, ensure_ascii=False))
+        return 0 if not failed else 1
+    if not args.slug:
+        print("error: index needs <slug> (or --all)", file=sys.stderr)
+        return 2
+    url = args.url
+    if not url and args.path and re.match(r"^(https?://|git@|ssh://|git://)", args.path):
+        url = args.path
+    try:
+        stats = _index_one(conn, ex, args.slug, args.path, url, args.sha,
+                           args.licence, args.ask_for)
+    except FileNotFoundError as e:
+        print(f"error: path not found: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(stats, ensure_ascii=False))
     return 0
 
 
@@ -917,9 +947,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=None, help="SQLite path (default $REFCODE_DB or ~/.refcode/refcode.db)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pi = sub.add_parser("index", help="extract+index a project into the shared DB")
-    pi.add_argument("slug")
+    pi = sub.add_parser("index", help="extract+index a project (or --all registered corpora)")
+    pi.add_argument("slug", nargs="?", default=None)
     pi.add_argument("path", nargs="?", default=None)
+    pi.add_argument("--all", action="store_true", help="index every registered corpus with a url")
+    pi.add_argument("--limit", type=int, default=None)
+    pi.add_argument("--dry-run", action="store_true")
     pi.add_argument("--url", default=None)
     pi.add_argument("--sha", default=None)
     pi.add_argument("--licence", default=None)
