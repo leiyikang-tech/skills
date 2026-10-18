@@ -267,6 +267,56 @@ result: <SUCCESS / PARTIAL / FAILED / ABORTED>
 ·（Refresh 模式则注明 diff 范围 · ABORTED 则注明失败 gate + 已尝试次数）
 ```
 
+**RUN-REPORT.md — 让"完成"可见、可查、可复现。** 每次 run（含 SUCCESS / PARTIAL /
+FAILED / ABORTED）**必须**在运行输出目录根生成一个人类可读的 `RUN-REPORT.md`
+（与 `kb/` 同级，即 `<run>/RUN-REPORT.md`），把本次分析浓缩成一张表，让使用者
+**打开一个文件**就能确认"这次分析做了什么、成没成、产物在哪"。与 `run.json`
+（机器状态）互补。格式固定如下（不许省略任何一行）：
+
+```
+# RUN-REPORT · <项目名> <YYYY-MM-DD>
+项目: <path> (owner/repo @<sha>, <version>)
+分析时间: <start> → <end> · 耗时 <n>
+分析结果: <SUCCESS / PARTIAL / FAILED / ABORTED>
+分类归属: <paradigm_id 名称 (A 轴 bin)>
+操作建议: <✅直接用/⚠️评估后用/🕐跟踪/🔴风险/❌暂不采用>
+
+## 五个操作 (Op1-5)
+| Op | 交付物 | gate | 路径 |
+|---|---|---|---|
+| Op1 结构 | 代码地图 AGENTS.md | Q1 <PASS/FAIL> | <path> |
+| Op2 画像 | 项目画像 | Q2 <PASS/FAIL> | <path> |
+| Op3 对比 | 竞品分析 + 原子能力清单 | Q3 <PASS/FAIL> | <path> |
+| Op4 缺口 | 缺口/机会分析 | Q4 <PASS/FAIL> | <path> |
+| Op5 持久化 | work-log 推送 | Q5 <PASS/FAIL> | <commit(s)> |
+
+## 五项门禁 (G1-G5)
+| 门禁 | 判定 | 证据 |
+|---|---|---|
+| G1 规模 | <PASS/FAIL> | <files/crates/LOC> |
+| G2 栈 | <PASS/FAIL> | <stack> |
+| G3 输出 | <PASS/FAIL> | <root kb + N per-dir docs> |
+| G4 质量 | <PASS/FAIL> | <N docs, anchors, links> |
+| G5 构建 | <PASS/FAIL> | <build/test evidence> |
+
+## 关键发现（摘要）
+- 应用建议三要素各 1 行 + 载体路径（生态地图 / 生态位置 / 关键缺口）
+- 主要结论 ≤5 条，每条一句
+
+## 缺口与机会
+- 新缺口 N 条: <ids + 一句话>
+- 新机会 N 条: <ids + 一句话>
+
+## 持久化目标
+- work-log 推送: <commit> · <文件名列表>
+
+---
+生成: repo-map <version> · <date>
+```
+
+gate/Op 判定直接取自 run.json 与各阶段产物，不得留空；PARTIAL/ABORTED 也要出，
+注明失败 gate + 已尝试次数。
+
 **分类归属与应用建议**：这两行是完成报告的一部分，每个 run 都要给出，不可省略。
 - **分类归属**：从 Op3 的 taxonomy 分类结果取该项目的 paradigm（A1–A12 bin + 名称）。awesome-mode 则取该成员项目映射到的 paradigm。
 - **应用建议（三要素，缺一不可）**：综合 Op2 核心功能 + Op3 comparative + Op4 缺口板，给出生态级的定位分析。**完成报告只放三要素摘要 + 指向各自完整载体的指针**（方案A：三要素拆开落位，完整内容在各载体文档，避免在报告内重复生态全景全文）：

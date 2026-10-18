@@ -127,6 +127,10 @@ Commit style observed: `docs(<topics>/<subcat>): 主题短语` — terse, scoped
   gap/opportunity `suggested_sources` or as the source of an atomic capability.
 - **Git hygiene**: never push secrets (the embedded PAT is already a known
   concern; don't add more). Don't commit `__pycache__`, temp clones, run.json.
+- **RUN-REPORT.md**: the human-readable run index lives at `<run>/RUN-REPORT.md`
+  (sibling of `kb/`) — the visible proof of the run. Push a copy to the work-log
+  alongside the deliverables so the analysis is discoverable by anyone reading
+  the store, not just the run dir.
 - **One distinctive file per deliverable**, not a mega-dump — indexable ==
   one-subject-per-file with a searchable name.
 
