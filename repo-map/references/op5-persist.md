@@ -120,7 +120,7 @@ Commit style observed: `docs(<topics>/<subcat>): 主题短语` — terse, scoped
 
 ## Operational rules
 
-- **Work in a single canonical clone** (`office/work-log`) to avoid divergent
+- **Work in a single canonical clone** (`/root/work-log`) to avoid divergent
   histories across the mirrored clones. Commit + push from one place.
 - **Index alongside**: if the store is the shared DB, also record the asset in
   the analysis registry so it's discoverable by field — name the file in the

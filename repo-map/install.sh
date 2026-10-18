@@ -27,6 +27,7 @@ ANALYSIS_DB="${ANALYSIS_DB:-$HOME/.sisyphus/db/analysis.db}"
 REPOS_DIR="${REPOS_DIR:-$HOME/.sisyphus/repos}"
 KNOWLEDGE_REPO_URL="${KNOWLEDGE_REPO_URL:-}"
 KNOWLEDGE_REPO_DIR="${KNOWLEDGE_REPO_DIR:-}"
+OPENCODE_COMMAND_DIR="${OPENCODE_COMMAND_DIR:-$HOME/.config/opencode/command}"
 
 DEST="$SKILL_DIR/repo-map"
 rm -rf "$DEST"
@@ -61,6 +62,17 @@ fi
 
 # ---- convenience: ensure the shared analysis DB dir exists ----
 mkdir -p "$(dirname "$ANALYSIS_DB")"
+
+# ---- register opencode slash-commands (commands/*.md -> opencode command dir) ----
+# The skill ships repo-map.md + awesome-map.md as command templates. Without this,
+# /repo-map (and siblings) resolve to whatever stale copy sits in the opencode
+# command dir, not this install. Copying the materialized commands keeps the
+# slash-command and the skill on the same (substituted) paths.
+if [ -d "$DEST/commands" ]; then
+  mkdir -p "$OPENCODE_COMMAND_DIR"
+  cp -f "$DEST"/commands/*.md "$OPENCODE_COMMAND_DIR/"
+  echo "  commands -> $OPENCODE_COMMAND_DIR/ ($(ls "$DEST"/commands/*.md 2>/dev/null | wc -l) registered)"
+fi
 
 echo "installed: $DEST"
 echo "  REPO_MAP_HOME=$REPO_MAP_HOME"
