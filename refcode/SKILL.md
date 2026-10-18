@@ -61,6 +61,7 @@ $R route /path/to/target/repo
 # 5) freshness + portability
 $R refresh --dry-run                     # git ls-remote -> STALE/fresh per pin
 $R stats
+$R verify report.md                      # check every [slug] path:line peer-anchor resolves
 $R dump --out refcode.dump.sql           # git-friendly text dump
 ```
 
