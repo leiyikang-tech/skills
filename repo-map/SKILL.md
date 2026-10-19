@@ -14,8 +14,9 @@ description: |
   Op4 = gap & opportunity analysis: find what the project CANNOT satisfy (gaps) and
   whether concepts cross-pollinate into new technologies (opportunities), persisted to a
   shared store so future analyses continuously track them. Op5 = knowledge asset
-  persistence: index every artifact under a distinctive name into the shared GitHub
-  knowledge repo ({{KNOWLEDGE_REPO_URL}}).
+  persistence: **refcode-index the analyzed project itself** so its file:line
+  anchors are queryable, then index every artifact under a distinctive name into
+  the shared GitHub knowledge repo ({{KNOWLEDGE_REPO_URL}}).
   Use when the user points at a repo/directory they have never analyzed and wants a
   thorough understanding, or explicitly asks for /init-deep, a project profile /
   核心功能 / 应用场景 / 核心亮点, or a competitive / paper-backed analysis.
@@ -112,7 +113,7 @@ failure visibility) that Op1 already has.
 | **Q2** (profile) | `depth_check.py` (mechanical) | PROFILE.md produced; **`depth_check.py --min-anchors 5` PASS** — every claimed core function has a resolvable `file:LINE` anchor, no unanchored mechanism claim |
 | **Q3** (compare) | `depth_check.py` (mechanical) | comparative doc + ATOMIC-CAPABILITIES.md produced; **`depth_check.py --min-anchors 3` PASS** — ≥1 EXTRACTED bottom-layer capability, each `file:LINE` anchor resolves, paper/vendor URLs resolve via `citation_check.py` |
 | **Q4** (gap/opp) | board gate | gap/opportunity findings written to `project_open_items` (≥1 item) **or** explicit "no new gaps" verdict recorded |
-| **Q5** (persist) | push gate | asset copied into work-log + `git commit` + `git push` **all succeeded** |
+| **Q5** (persist) | push gate | **analyzed project itself `refcode index`ed** (smoke `def` resolves) **AND** asset copied into work-log + `git commit` + `git push` **all succeeded** |
 
 **Gate protocol (every op, identical):**
 1. At the end of each op, evaluate its Q-gate PASS condition against the actual

@@ -93,6 +93,44 @@ Pattern rule: **`<subject>作为<role>的<analysis-type>`** or
 属于生态级综述，放入匹配的 `<domain>` 主题目录（不是 `缺口分析/`，也不是单项目文档）。
 完成报告「应用建议·生态地图」要素引用此文档路径。
 
+## Index the analyzed project into refcode FIRST (MANDATORY)
+
+**Before persisting any doc**, index the analyzed project itself into the shared
+refcode corpus so every `file:line` anchor in Op1–Op4 output is actually
+retrievable — the analysis is not "done" until its source is queryable. This is
+the step that makes the deliverables self-grounded (peer comparison later can
+`refcode def/query` the real code, not the README).
+
+```bash
+R=/root/.agents/skills/refcode/refcode            # shared DB: ~/.refcode/refcode.db -> /root/.sisyphus/db/refcode.db
+SLUG=<repo-basename-lowercased>                   # e.g. ai-scientist-v3
+REPO=<absolute path to the analyzed project>
+
+# 1) resolve the SPDX licence — never guess it. Prefer, in order:
+#    a) GitHub API (if a remote URL is known): licence.spdx_id
+#    b) local probe: grep -i "license" pyproject.toml / Cargo.toml / package.json
+#    c) fall back to the licence recorded in Op2 profile
+LICENCE=<spdx-id>                                 # e.g. Apache-2.0
+
+# 2) index (idempotent: re-indexing the same slug refreshes it)
+$R index "$SLUG" "$REPO" --licence "$LICENCE"
+
+# 3) fix the heuristic domain if it misclassifies (classify reads lockfiles +
+#    name hints; a python agent framework with a frontend dir can come out
+#    "web-framework"). Export, correct, re-add:
+$R corpus export > /tmp/corpus.json
+#   edit <slug>.domain to a taxonomy-fitting label (e.g. agentic-ai4s)
+$R corpus add --from /tmp/corpus_fixed.json
+
+# 4) prove it is queryable — one smoke query must return a real file:line
+$R def <a-core-symbol>                            # must resolve to <path>:<line>
+```
+
+**Discipline:** `index` the *analyzed project itself* — this is not the Op3 peer
+step. Op3 indexes/retrieves *peers*; Op5 indexes *this* project so its own
+anchors are searchable. If `index` fails, say so in the run summary and record
+the reason — do not silently skip it.
+
 ## Persistence workflow (real command chain)
 
 For each deliverable produced by Op1–Op4:
@@ -136,6 +174,8 @@ Commit style observed: `docs(<topics>/<subcat>): 主题短语` — terse, scoped
 
 ## Deliverables (Op5 gateway)
 
+- **The analyzed project itself is `refcode index`ed** (see "Index into refcode
+  FIRST" above) — its `file:line` anchors are queryable via `refcode def/query`.
 - Every Op1–Op4 artifact written into the work-log knowledge repo under a
   distinct, subject+analysis-type name.
 - Committed with a scoped `docs(<category>): ...` message and pushed, with the
@@ -164,6 +204,10 @@ Every Op5 run ends by printing a structured summary covering three items.
   - <核心亮点 1>（来自 Op2 profile 的 highlights）
   - <核心亮点 2>
   - ...
+
+refcode 索引：
+  - <slug> → <path> (<licence>)，<n> 符号 / <n> 窗口，domain=<domain>
+  - smoke: def <symbol> → <path>:<line>   （若 index 失败：记录失败原因，不静默）
 
 ═══ 完成 ═══
 ```

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Deterministic quality gates for the repo-map pipeline (G1-G5).
+"""Deterministic quality gates for the repo-map pipeline (G1-G6).
 
 Every gate is a PURE check - no LLM judgment in the pass/fail decision. Each
 returns exit code 0 (PASS), 1 (FAIL -> rework), or 2 (BLOCKED -> attempt budget
 exhausted). gates.py only DECIDES; it does not mutate run.json. The orchestrator
 (skill) calls refresh_state.py gate <g> to persist the result.
 
-  gates.py <g1|g2|g3|g4|g5> --repo <path> [--out <dir>] [--stack <name>]
+  gates.py <g1|g2|g3|g4|g5|g6> --repo <path> [--out <dir>] [--stack <name>]
 
 Gate semantics:
   g1  DISCOVERY  - did exploration surface analyzable material? (entrypoints,
@@ -19,6 +19,8 @@ Gate semantics:
                    internal links resolve, count matches scoring)
   g5  FINAL      - does the project build/lint/test? (per-stack command; SKIP
                    allowed only with an explicit recorded reason)
+  g6  INDEXED    - is the analyzed project itself indexed into the shared refcode
+                   corpus? (ref_projects row live + a real ref_symbols hit)
 """
 
 import argparse
@@ -223,9 +225,49 @@ def gate_g5(repo, stack):
     return 1, f"{stack} build/test failed (rc={code})"
 
 
+def gate_g6(repo):
+    """Analyzed project itself is indexed into the shared refcode corpus.
+    Returns 0 PASS, 1 FAIL(rework -> must `refcode index`), 2 BLOCKED(refcode
+    missing/unreachable). Queries ref_projects directly (robust to CLI output
+    format) and proves the index is queryable via a live ref_symbols hit.
+
+    Slug convention mirrors refcode: repo basename, lowercased, non-alnum->'-'.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(repo)).lower()).strip("-")
+    # canonical shared DB, same resolution refcode uses
+    db = os.environ.get("REFCODE_DB") or os.path.expanduser("~/.refcode/refcode.db")
+    if not os.path.isfile(db):
+        return 2, f"refcode DB not found ({db}) -> BLOCKED; run refcode install/init first"
+    try:
+        import sqlite3
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        cur = con.cursor()
+        row = cur.execute(
+            "SELECT local_path, symbols, windows, indexed_at, status FROM ref_projects WHERE slug=?",
+            (slug,),
+        ).fetchone()
+        if not row:
+            return 1, f"'{slug}' not in refcode corpus -> FAIL; run `refcode index {slug} <repo> --licence <SPDX>` (repo-map Op5)"
+        local_path, symbols, windows, indexed_at, status = row
+        if status != "live":
+            return 1, f"'{slug}' indexed but status={status!r} (not 'live') -> FAIL"
+        if not symbols or int(symbols) < 1:
+            return 1, f"'{slug}' indexed but 0 symbols extracted -> FAIL"
+        live_symbol_hit = cur.execute(
+            "SELECT 1 FROM ref_symbols WHERE project=? LIMIT 1", (slug,)
+        ).fetchone()
+        con.close()
+        if not live_symbol_hit:
+            return 1, f"'{slug}' has {symbols} symbols but ref_symbols query returned none -> FAIL"
+        return 0, (f"'{slug}' refcode-indexed ({symbols} syms / {windows} windows, "
+                   f"status={status}, indexed_at={indexed_at}, live query hit) -> PASS")
+    except Exception as e:  # noqa: BLE001
+        return 2, f"refcode DB query failed: {e} -> BLOCKED"
+
+
 def main():
     parser = argparse.ArgumentParser(description="repo-map deterministic quality gates")
-    parser.add_argument("gate", choices=["g1", "g2", "g3", "g4", "g5"])
+    parser.add_argument("gate", choices=["g1", "g2", "g3", "g4", "g5", "g6"])
     parser.add_argument("--repo", required=True, help="absolute path to analyzed repo")
     parser.add_argument("--out", help="dir where knowledge docs were written (default: repo)")
     parser.add_argument("--stack", help="detected stack (gates.py --stack from g2; g5 otherwise re-detects)")
@@ -250,6 +292,8 @@ def main():
         code, msg = gate_g4(repo, args.out, dirs)
     elif args.gate == "g5":
         code, msg = gate_g5(repo, stack)
+    elif args.gate == "g6":
+        code, msg = gate_g6(repo)
     else:
         code, msg = 1, "unknown gate"
 

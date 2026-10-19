@@ -85,6 +85,30 @@ is exactly XERJ's corpus-hub rule:
 - ⚠️ `dump` is a **full-content** text export (measured ~90MB for a 21-corpus
   build), so it is *not* a git artifact either — use it for inspection/backup.
 
+## Indexing semantics — re-indexing is idempotent full rebuild, not incremental
+
+Re-running `refcode index <slug> <path>` on an **already-indexed** slug is a
+**full, idempotent rebuild** — NOT an incremental update. This is the refresh
+path when a project's source changes:
+
+- `_index_one` `DELETE`s the slug's old `ref_symbols` + `ref_body_fts` rows, then
+  re-walks the local dir / re-clones at the pin and re-extracts **everything**.
+- The `ref_projects` row is updated via `ON CONFLICT(slug) DO UPDATE` — `symbols`,
+  `windows`, `files`, `local_path`, `indexed_at` and `status='live'` all refresh.
+- **To refresh an updated codebase:** just re-run `refcode index <slug> <path>`
+  (or re-run the repo-map Op5 step, which does exactly this). No separate
+  incremental mechanism exists; the rebuild is cheap (566 files ≈ seconds).
+- **`domain` survives re-index:** `_index_one` keeps `prev["domain"]` when set
+  (so a `corpus add` correction is NOT clobbered). ⚠️ But the **JSON returned**
+  by `index` reports the *heuristic* `info["domain"]`, not the stored one — the
+  displayed domain may differ from what is actually persisted. Trust the DB, not
+  the returned JSON.
+- **`refresh` is NOT a rebuild.** `cmd_refresh` only works on rows with a git
+  `url`; it `git ls-remote`s the pin, marks `STALE`/`fresh`, and bumps
+  `refreshed_at`. It never re-extracts and it **skips local-dir projects**
+  (`url IS NULL`). Use `index` to refresh local corpora; use `refresh` only to
+  report staleness of pinned remote corpora.
+
 ## Honest limits
 
 - **Symbol extraction quality varies by grammar.** 11 languages ship a proper

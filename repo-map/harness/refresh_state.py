@@ -8,7 +8,7 @@ known phase and a mid-run crash resumes at the exact failed gate.
 
 Commands (each returns exit 0 on success, 1 on real error):
   init    --repo <path> [--out <dir>]   create a fresh run in discovery phase
-  gate    <g1|g2|g3|g4|g5> [--result PASS|FAIL] [--note text]
+  gate    <g1|g2|g3|g4|g5|g6> [--result PASS|FAIL] [--note text]
                                         record one gate result (PASS advances)
   advance <phase>                       mark phase complete, move to next
   resume                                print the current phase + gate state
@@ -34,13 +34,14 @@ import sys
 import time
 from datetime import datetime, timezone
 
-PHASES = ["g1", "g2", "g3", "g4", "g5"]
+PHASES = ["g1", "g2", "g3", "g4", "g5", "g6"]
 PHASE_LABELS = {
     "g1": "discovery",
     "g2": "scoring",
     "g3": "generate",
     "g4": "review",
     "g5": "final",
+    "g6": "indexed",
 }
 MAX_ATTEMPTS = 3
 
