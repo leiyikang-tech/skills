@@ -93,7 +93,7 @@ Pattern rule: **`<subject>作为<role>的<analysis-type>`** or
 属于生态级综述，放入匹配的 `<domain>` 主题目录（不是 `缺口分析/`，也不是单项目文档）。
 完成报告「应用建议·生态地图」要素引用此文档路径。
 
-## Index the analyzed project into refcode FIRST (MANDATORY)
+## Index the analyzed project into refcode FIRST (MANDATORY — gate g6)
 
 **Before persisting any doc**, index the analyzed project itself into the shared
 refcode corpus so every `file:line` anchor in Op1–Op4 output is actually
@@ -126,10 +126,21 @@ $R corpus add --from /tmp/corpus_fixed.json
 $R def <a-core-symbol>                            # must resolve to <path>:<line>
 ```
 
+**Then gate it — this step is mechanised, do not eyeball it:**
+
+```bash
+python3 {{REPO_MAP_HOME}}/harness/gates.py g6 --repo "$REPO"
+#   exit 0 = PASS      (ref_projects row live + a real ref_symbols hit)
+#   exit 1 = FAIL      -> refcode index <slug> "$REPO" --licence <SPDX>, re-run g6
+#   exit 2 = BLOCKED   -> refcode DB missing; record BLOCKED, never silently skip
+python3 {{REPO_MAP_HOME}}/harness/refresh_state.py gate g6 --out <run-dir> --result PASS
+```
+
 **Discipline:** `index` the *analyzed project itself* — this is not the Op3 peer
 step. Op3 indexes/retrieves *peers*; Op5 indexes *this* project so its own
 anchors are searchable. If `index` fails, say so in the run summary and record
-the reason — do not silently skip it.
+the reason — do not silently skip it. **Q5 does not PASS on the push alone:**
+g6 PASS **AND** push success, both required.
 
 ## Persistence workflow (real command chain)
 
@@ -158,7 +169,7 @@ Commit style observed: `docs(<topics>/<subcat>): 主题短语` — terse, scoped
 
 ## Operational rules
 
-- **Work in a single canonical clone** (`/root/work-log`) to avoid divergent
+- **Work in a single canonical clone** (`{{KNOWLEDGE_REPO_DIR}}`) to avoid divergent
   histories across the mirrored clones. Commit + push from one place.
 - **Index alongside**: if the store is the shared DB, also record the asset in
   the analysis registry so it's discoverable by field — name the file in the
@@ -174,8 +185,9 @@ Commit style observed: `docs(<topics>/<subcat>): 主题短语` — terse, scoped
 
 ## Deliverables (Op5 gateway)
 
-- **The analyzed project itself is `refcode index`ed** (see "Index into refcode
-  FIRST" above) — its `file:line` anchors are queryable via `refcode def/query`.
+- **The analyzed project itself is `refcode index`ed and `gates.py g6` PASSES**
+  (see "Index into refcode FIRST" above) — its `file:line` anchors are queryable
+  via `refcode def/query`.
 - Every Op1–Op4 artifact written into the work-log knowledge repo under a
   distinct, subject+analysis-type name.
 - Committed with a scoped `docs(<category>): ...` message and pushed, with the
@@ -197,7 +209,7 @@ Every Op5 run ends by printing a structured summary covering three items.
   - ...
 
 上传位置：
-  - {{KNOWLEDGE_REPO_URL}}/<domain>/<filename>
+  - /<domain>/<filename>
   - ...
 
 项目核心亮点：
@@ -216,7 +228,7 @@ Rules for the summary:
 - **生成文件** = every distinctive `.md` produced by this Op5 run, named with
   the `subject+analysis-type` convention above.
 - **上传位置** = the work-log repo path (`<domain>/<filename>`) + the remote
-  URL prefix (`{{KNOWLEDGE_REPO_URL}}/`). Do NOT echo the PAT.
+  URL prefix (`/`). Do NOT echo the PAT.
 - **项目核心亮点** = the 2-4 most distinctive findings from Op2 profile
   (core functions, key advantages, what makes this project stand out).
   If Op2 was not run in this session, derive highlights from Op3 comparison

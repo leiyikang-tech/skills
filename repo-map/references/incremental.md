@@ -24,21 +24,61 @@ against the *paradigm bin* — both are deterministic now.
 ## 0. Baseline detection (do this first, every run)
 
 ```bash
-# 1) Was this repo mapped before? -> project_baselines row exists?
+# 0a) Resolve the project's canonical identity BEFORE baseline lookup.
+#     Two clones of the SAME GitHub project (different dirs/versions) MUST NOT
+#     become two baselines. Identity = git origin remote, normalized to
+#     '<owner>/<repo>' (credentials stripped, .git dropped), NOT the local path.
 python3 - <<'PY'
-import sqlite3, os
+import subprocess, sys, os, sqlite3
 db=os.path.expanduser("{{ANALYSIS_DB}}")
-con=sqlite3.connect(db)
 path=os.path.abspath(sys.argv[1] if len(sys.argv)>1 else ".")
+con=sqlite3.connect(db)
+def norm(url):
+    if not url: return None
+    url=url.strip()
+    # scp-style git@host:owner/repo.git
+    m=__import__('re').match(r"(?:[^@]+@)?([^:/]+):(.+?)(?:\.git)?$",url)
+    if m and "github.com" in m.group(1): return m.group(2).lstrip("/").rstrip("/")
+    # https-style (with optional credentials)
+    m=__import__('re').match(r"https?://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?$",url)
+    if m: return m.group(1).rstrip("/")
+    return url.rstrip("/") if __import__('re').match(r"^[^/]+/[^/]+$",url) else None
+remote=subprocess.run(["git","-C",path,"config","--get","remote.origin.url"],
+                      capture_output=True,text=True).stdout.strip() if os.path.isdir(os.path.join(path,".git")) else ""
+rem=norm(remote)
+# Is this identity already baselined under a DIFFERENT local path?
+row=con.execute("SELECT repo_path, last_analyzed_sha, mapped_at FROM project_baselines WHERE remote_path=?",(rem,)).fetchone() if rem else None
+print("canonical remote_path:", rem if rem else "NONE (local-only)")
+print("existing baseline via remote:", row if row else "NONE")
+# Baseline lookup by local path (for local-only projects, or exact-path runs)
 r=con.execute("SELECT last_analyzed_sha, paradigm_id, mapped_at FROM project_baselines WHERE repo_path=?",(path,)).fetchone()
-print("baseline:", r if r else "NONE -> Fresh")
+print("baseline by path:", r if r else "NONE -> Fresh")
 PY
-# 2) If baselined: how much changed since?
+# 0b) If baselined: how much changed since?
 git -C <repo> log -1 --format=%H              # current HEAD
 git -C <repo> diff --stat <last_analyzed_sha>..HEAD  # the delta
 ```
 
-Classification (deterministic):
+Classification (deterministic, in this order):
+
+**Step A — identity dedup (the `remote_path` guard).** If the run's target resolves
+to a `remote_path` that already has a `project_baselines` row under a **different
+local path**, this is a **second clone of the same GitHub project** → **never a
+Fresh run, never a new baseline row**:
+- canonical `repo_path` = the row the `remote_path` already points to.
+- compare this clone's HEAD vs `last_analyzed_sha` of the canonical row:
+  - same sha → **no-op** (this clone adds nothing; reuse the canonical analysis).
+  - newer sha → **Refresh** on the canonical row (delta from `last_analyzed_sha`;
+    update the canonical row's `last_analyzed_sha`, do NOT insert a new row —
+    the UNIQUE index on `remote_path` rejects it anyway).
+  - older sha → **no-op** + note "a newer version is already analyzed at
+    `<canonical_repo_path>`"; do not regress the baseline.
+- Record the decision in the run output (`auto: identity dedup via remote_path
+  <owner/repo> → canonical <repo_path>`). This is the mechanism that prevents
+  two directories of one GitHub project from producing two analyses.
+
+**Step B — normal path baseline classification** (only reached if Step A found no
+`remote_path` match, i.e. this is a genuinely new identity or a local-only repo):
 - No `project_baselines` row → **Fresh** (full 5-op).
 - Row exists AND `git diff` non-empty → **Refresh** (delta Op1/Op2/Op4; Op3 re-check).
 - Row exists AND no diff (unchanged) → **no-op** — tell user nothing changed, skip work.
@@ -71,7 +111,8 @@ Changes that matter → **Op1 delta scope**:
    explore agents ONLY for the touched clumps (dynamic-scale per delta size, not repo size).
 2. **edit, don't rewrite**: `edit` the affected AGENTS.md; unchanged docs untouched.
    Update the `Generated | Commit` header to the new sha.
-3. Re-run G1–G5 (cheap file checks) to re-certify the whole map still holds.
+3. Re-run G1–G5 (cheap file checks) to re-certify the whole map still holds;
+   re-run `gates.py g6` only if the project's source changed (refcode index is stale).
 4. If the delta changes the verdicts (new deps, new entrypoint, different stack):
    re-verify and record it.
 
@@ -93,7 +134,17 @@ search feature → A1 → A1+A2). Re-run the §3.1 taxonomy classification on th
 
 ### 1.5 Update the baseline
 ```sql
-UPDATE project_baselines SET last_analyzed_sha=<new HEAD>, paradigm_id=?, mapped_at=now WHERE repo_path=?;
+-- UPSERT: identity-keyed. If this repo's remote_path is already baselined under
+-- another path (a second clone), UPDATE only — never INSERT a new row (the
+-- UNIQUE index on remote_path enforces one baseline per GitHub project).
+INSERT INTO project_baselines(repo_path, last_analyzed_sha, paradigm_id, artifacts, mapped_at, remote_path)
+VALUES (<repo_path>, <new HEAD>, ?, ?, now, <owner/repo>)
+ON CONFLICT(repo_path) DO UPDATE SET
+  last_analyzed_sha=excluded.last_analyzed_sha,
+  paradigm_id=excluded.paradigm_id,
+  artifacts=excluded.artifacts,
+  mapped_at=now,
+  remote_path=excluded.remote_path;
 ```
 
 ---
@@ -161,8 +212,17 @@ CREATE TABLE IF NOT EXISTS project_baselines (
   last_analyzed_sha TEXT,          -- git HEAD the map was generated at
   paradigm_id      TEXT,           -- A1..A12 primary (axis A)
   artifacts        TEXT,           -- json: {root_kb, dirs[], profile, comparison}
-  mapped_at        TEXT            -- ISO timestamp
+  mapped_at        TEXT,           -- ISO timestamp
+  remote_path      TEXT            -- canonical '<owner>/<repo>' from git origin (nullable)
 );
+-- Identity dedup guard: one GitHub project == one baseline, regardless of clone dir.
+-- Partial unique index: local-only repos (remote_path NULL) are never constrained.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_baselines_remote
+  ON project_baselines(remote_path) WHERE remote_path IS NOT NULL;
 ```
-Holds the "what do I already know about THIS project" state that Refresh diffs
-against. Written after every successful analysis; read at every run start.
+`remote_path` is the **project identity** (`git remote origin` → `owner/repo`,
+credentials stripped); `repo_path` is only **where it lives**. Refresh / dedup
+logic keys on `remote_path` (Step A in §0), never on `repo_path` alone, so a
+second clone of an already-mapped project is recognized as the same project.
+Backfill existing rows with: `git -C <dir> config --get remote.origin.url`
+normalized (see §0 Step A `norm()`); local-only dirs keep NULL.

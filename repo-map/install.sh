@@ -55,6 +55,7 @@ subst
 [ -f "$DEST/SKILL.md" ] || { echo "ERROR: SKILL.md not installed"; exit 1; }
 [ -d "$DEST/references" ] || { echo "ERROR: references/ not installed"; exit 1; }
 [ -f "$DEST/harness/gates.py" ] || { echo "ERROR: harness/gates.py not installed"; exit 1; }
+[ -f "$DEST/harness/cleanup.py" ] || { echo "ERROR: harness/cleanup.py not installed"; exit 1; }
 if find "$DEST" -type f ! -name 'install.sh' | xargs grep -l "{{[A-Z_]*}}" 2>/dev/null; then
   echo "ERROR: unsubstituted placeholder left in installed files"
   exit 1

@@ -91,6 +91,15 @@ def cmd_init(args):
     return 0
 
 
+def normalise_gate_slots(state):
+    gates = state.get("gates")
+    if isinstance(gates, dict) and all(p in gates for p in PHASES):
+        return gates
+    state["gates"] = {p: {"result": None, "attempts": 0, "note": ""} for p in PHASES}
+    print("note: run.json gates normalised to g1..g6")
+    return state["gates"]
+
+
 def cmd_gate(args, run_dir):
     run_json = os.path.join(run_dir, "run.json")
     state = load_state(run_json)
@@ -101,7 +110,7 @@ def cmd_gate(args, run_dir):
     if g not in PHASES:
         print(f"unknown gate {g}; expected one of {PHASES}")
         return 1
-    gate = state["gates"][g]
+    gate = normalise_gate_slots(state)[g]
     result = args.result.upper() if args.result else "PASS"
     if result == "PASS":
         gate["result"] = "PASS"
@@ -156,10 +165,18 @@ def cmd_finish(args, run_dir):
     if not state:
         print("no run.json found")
         return 1
+    gates = normalise_gate_slots(state)
+    unmet = [p for p in PHASES if gates[p]["result"] != "PASS"]
+    if unmet and not args.force:
+        print(f"finish REFUSED: gates not PASS: {', '.join(unmet)}")
+        print("run the gate, then 'refresh_state.py gate <gN> --result PASS --note <evidence>'")
+        print("override with --force only for a PARTIAL/FAILED report (recorded as such)")
+        return 1
     state["phase"] = "complete"
     state["summary"] = args.summary or state["summary"]
+    state["result"] = "SUCCESS" if not unmet else "PARTIAL"
     save_state(run_json, state)
-    print("finish: run marked complete with summary")
+    print(f"finish: run marked complete ({state['result']}) with summary")
     return 0
 
 
@@ -185,6 +202,7 @@ def main():
 
     p_finish = sub.add_parser("finish")
     p_finish.add_argument("--summary", default="")
+    p_finish.add_argument("--force", action="store_true", help="mark complete even with unmet gates (PARTIAL)")
     p_finish.add_argument("--out", help="directory holding run.json (default: harness dir)")
 
     args = parser.parse_args()

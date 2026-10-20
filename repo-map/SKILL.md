@@ -88,7 +88,8 @@ deep-dive mode's two-ontology schema + grounding contract lives in
 `references/deepdive.sql` (6 tables + v_dd_convergence view) and
 `references/deepdive.md` (the deep-dive playbook).
 
-**Harness:** `gates.py` (G1–G5, file-system quality) drives **Op1** (→ Q1).
+**Harness:** `gates.py` (G1–G5, file-system quality) drives **Op1** (→ Q1);
+`gates.py g6` (refcode index) drives the indexing half of **Op5** (→ Q5).
 `depth_check.py` (deterministic `path:LINE` anchor gate) drives **Op2/Op3** (→ Q2/Q3),
 so a capability claim without a resolvable source anchor is structurally rejected —
 no LLM judgment in the verdict. Op2/Op3 also keep their playbook-level gates
@@ -103,9 +104,10 @@ skipped.
 **Every operation ends with a gate that MUST produce a verdict (PASS/FAIL).** A
 run is not allowed to drift to a vague "looks done" — each op has an explicit,
 decidable PASS condition; the completion report (below) is only produced by the
-hard gate chain. This unifies the pipeline: Op1 keeps its scripted G1–G5, and
-Op2–Op5 gain the same contract (decidable PASS condition + attempt budget +
-failure visibility) that Op1 already has.
+hard gate chain. This unifies the pipeline: Op1 keeps its scripted G1–G5, Op5
+adds the scripted **G6 (refcode index)**, and Op2–Op5 gain the same contract
+(decidable PASS condition + attempt budget + failure visibility) that Op1
+already has.
 
 | Op | Gate | PASS condition (decidable) |
 |----|------|-----------------------------|
@@ -113,15 +115,42 @@ failure visibility) that Op1 already has.
 | **Q2** (profile) | `depth_check.py` (mechanical) | PROFILE.md produced; **`depth_check.py --min-anchors 5` PASS** — every claimed core function has a resolvable `file:LINE` anchor, no unanchored mechanism claim |
 | **Q3** (compare) | `depth_check.py` (mechanical) | comparative doc + ATOMIC-CAPABILITIES.md produced; **`depth_check.py --min-anchors 3` PASS** — ≥1 EXTRACTED bottom-layer capability, each `file:LINE` anchor resolves, paper/vendor URLs resolve via `citation_check.py` |
 | **Q4** (gap/opp) | board gate | gap/opportunity findings written to `project_open_items` (≥1 item) **or** explicit "no new gaps" verdict recorded |
-| **Q5** (persist) | push gate | **analyzed project itself `refcode index`ed** (smoke `def` resolves) **AND** asset copied into work-log + `git commit` + `git push` **all succeeded** |
+| **Q5** (persist) | push gate **+ `gates.py g6`** | **`python3 harness/gates.py g6 --repo <repo>` exits 0** (analyzed project itself `refcode index`ed, a live `ref_symbols` hit resolves) **AND** asset copied into work-log + `git commit` + `git push` **all succeeded** |
+
+> **g6 is not optional and not a separate op** — it is the mechanical half of Q5.
+> `gates.py` has shipped `gate_g6` and `refresh_state.py` already lists `g6` in
+> `PHASES`, so a run that never invokes it leaves the `g6` slot empty in
+> `run.json`. Q5 = **g6 PASS** AND push PASS; both, or Q5 FAILS.
+>
+> ```bash
+> # run this BEFORE copying/pushing any doc — anchors must be queryable first
+> python3 {{REPO_MAP_HOME}}/harness/gates.py g6 --repo "$REPO"   # 0=PASS 1=FAIL 2=BLOCKED
+> # on 1 (FAIL): refcode index <slug> "$REPO" --licence <SPDX>   then re-run g6
+> # on 2 (BLOCKED): refcode DB missing -> report BLOCKED, do not silently skip
+> ```
 
 **Gate protocol (every op, identical):**
+0. **Close the run with `refresh_state.py finish`** — it now REFUSES to mark a run
+   complete while any of `g1..g6` is not PASS (exit 1, listing the unmet gates).
+   `--force` marks it complete but records `result: PARTIAL`. A run that never
+   reaches `finish` has no SUCCESS verdict.
+0b. **Reclaim disk after a closed run** (optional but recommended): run the safe
+   byproduct cleanup on the analyzed repo — `python3
+   harness/cleanup.py --repo "$REPO" --dry-run` to preview, then live. It removes
+   compile artifacts/caches (only non-tracked paths), compacts git history
+   (`reflog expire` + `git gc --aggressive`), and clears `/tmp` repo-map scratch.
+   It never deletes a tracked source file. (See `harness/README.md`.)
 1. At the end of each op, evaluate its Q-gate PASS condition against the actual
    artifact (not the intent). No artifact → FAIL.
-2. FAIL → rework the op (attempt budget **3**). On exhaust → **Oracle once** →
+2. **Persist every verdict through the harness** — `python3
+   harness/refresh_state.py gate <gN> --result PASS|FAIL --note "<evidence>"`
+   for `g1`–`g6`. `run.json`'s `gates` keys are **exactly** `g1..g6` (as created
+   by `refresh_state.py init`); never hand-write `Q1..Q5` into `run.json`, or the
+   `g6` slot stays empty and the gate chain is unauditable.
+3. FAIL → rework the op (attempt budget **3**). On exhaust → **Oracle once** →
    if still FAIL, mark that op's gate FAILED and **continue to the completion
    report** (do not loop forever).
-3. A FAILED op gate does NOT silently end the run — it forces a **PARTIAL/FAILED**
+4. A FAILED op gate does NOT silently end the run — it forces a **PARTIAL/FAILED**
    completion report (see below). The report is the only "done" signal.
 
 > **Rationale:** previously only Op1 had a scripted gate; Op2–Op5 were soft rules
@@ -256,11 +285,13 @@ ends with a completion block — **success AND failure alike**:
 ✓ Op2 完成 → 画像 <paths>                  gate: Q2 <PASS/FAIL>
 ✓ Op3 完成 → 对比+原子能力 <paths>          gate: Q3 <PASS/FAIL>
 ✓ Op4 完成 → 缺口/机会已写入共享库 <n 条>   gate: Q4 <PASS/FAIL>
-✓ Op5 完成 → 已持久化并推送 <names>         gate: Q5 <PASS/FAIL>
+✓ Op5 完成 → refcode 索引 <slug>(<n> 符号) + 已推送 <names>   gate: Q5 <PASS/FAIL> (g6 <PASS/FAIL> + push <PASS/FAIL>)
+✓ 清理完成 → 编译产物/缓存 + git 历史压缩 + /tmp 临时  释放 <n> (cleanup.py，未删任何已跟踪源码)
 
 ═══ repo-map 完成 ═══
 result: <SUCCESS / PARTIAL / FAILED / ABORTED>
-· 5 gate verdicts: Q1–Q5 (<PASS×N> / <FAIL×M>) · 无待确认项 · 产物路径
+· 5 op gate verdicts: Q1–Q5 (<PASS×N> / <FAIL×M>) · 6 harness gates: g1–g6 (<PASS×N> / <FAIL×M>) · 无待确认项 · 产物路径
+· refcode 索引: <slug> → <n> 符号 / <n> 窗口 (licence <SPDX>, domain <domain>) · smoke: def <sym> → <path>:<line>
 · 分类归属: <paradigm_id 名称 (A 轴 bin，来自 Op3 taxonomy 分类)>
 · 应用建议: 生态地图→<landscape 文档路径> · 生态位置→<单项目分析文档 §七>
 ·           关键缺口→<缺口分析/<project>的缺口和机会分析.md>   (摘要+指针，见下)
@@ -289,9 +320,9 @@ FAILED / ABORTED）**必须**在运行输出目录根生成一个人类可读的
 | Op2 画像 | 项目画像 | Q2 <PASS/FAIL> | <path> |
 | Op3 对比 | 竞品分析 + 原子能力清单 | Q3 <PASS/FAIL> | <path> |
 | Op4 缺口 | 缺口/机会分析 | Q4 <PASS/FAIL> | <path> |
-| Op5 持久化 | work-log 推送 | Q5 <PASS/FAIL> | <commit(s)> |
+| Op5 持久化 | refcode 索引 + work-log 推送 | Q5 <PASS/FAIL> (g6 <PASS/FAIL>) | <commit(s)> |
 
-## 五项门禁 (G1-G5)
+## 六项门禁 (G1-G6)
 | 门禁 | 判定 | 证据 |
 |---|---|---|
 | G1 规模 | <PASS/FAIL> | <files/crates/LOC> |
@@ -299,6 +330,12 @@ FAILED / ABORTED）**必须**在运行输出目录根生成一个人类可读的
 | G3 输出 | <PASS/FAIL> | <root kb + N per-dir docs> |
 | G4 质量 | <PASS/FAIL> | <N docs, anchors, links> |
 | G5 构建 | <PASS/FAIL> | <build/test evidence> |
+| G6 索引 | <PASS/FAIL/BLOCKED> | `gates.py g6`: <slug> <n> syms / <n> windows, status=<live>, live query hit |
+
+## refcode 索引（Op5 强制步骤，g6）
+- slug: <slug> · path: <repo abs path> · licence: <SPDX>
+- 规模: <n> 文件 / <n> 符号 / <n> 窗口 · domain: <domain>
+- smoke: `def <sym>` → `<path>:<line>`  （若 index 失败：记录失败原因，不静默）
 
 ## 关键发现（摘要）
 - 应用建议三要素各 1 行 + 载体路径（生态地图 / 生态位置 / 关键缺口）
@@ -345,7 +382,7 @@ gate/Op 判定直接取自 run.json 与各阶段产物，不得留空；PARTIAL/
   没有明确建议就写"建议仅跟踪，暂不引入"而非留空。
 
 **Hardened rules (A + C):**
-- **SUCCESS** = Q1–Q5 all PASS.
+- **SUCCESS** = Q1–Q5 all PASS (Q5 requires **both** `g6` PASS and push PASS).
 - **PARTIAL** = ≥1 op completed but ≥1 Q-gate FAILED (budget exhausted).
 - **FAILED/ABORTED** = a gate failed at budget exhaustion and Oracle couldn't
   recover, or the run aborted before completing — **still prints the block**,
@@ -364,14 +401,22 @@ Classify Fresh / Refresh / Same-domain first (`references/incremental.md`):
 
 | Mode | Trigger | What's delta |
 |------|---------|--------------|
-| Fresh | no `project_baselines` row | everything — full 5-op |
+| Fresh | no `project_baselines` row for this identity | everything — full 5-op |
 | Refresh | baselined + `git diff` non-empty | the git diff since `last_analyzed_sha` (delta Op1/2/4) |
 | Same-domain | paradigm bin (A1–A12) has prior analyses | alignment to the bin: existing competitors/papers/gaps define the Op3 baseline — **locate the NEW mechanism, don't rescan the landscape** |
 
+**Identity, not path, gates baseline lookup.** Project identity = git origin
+remote normalized to `<owner>/<repo>` (`project_baselines.remote_path`, unique
+partial index). A second clone of an already-mapped GitHub project — different
+local dir, possibly different version — is resolved to its **existing** baseline
+by `remote_path` and is never a Fresh run and never inserts a new row. Version
+difference becomes a Refresh on the canonical row; see §0 Step A in
+`references/incremental.md`.
+
 Core rule shared by both incremental modes: **search the delta against your
-baseline, never re-scan the whole landscape.** Refresh diffs against the
-project's own last git state; Same-domain diffs against its paradigm bin's
-existing assets. The taxonomy makes both "delta" well-defined.
+ baseline, never re-scan the whole landscape.** Refresh diffs against the
+ project's own last git state; Same-domain diffs against its paradigm bin's
+ existing assets. The taxonomy makes both "delta" well-defined.
 
 Full mechanics: `references/incremental.md` + the bin/DISPATCH tables.
 
@@ -594,8 +639,21 @@ summary.
 assets** — distinctive-named files pushed to the shared GitHub knowledge repo.
 This is how finished analyses become a searchable library.
 
+**Op5 has TWO mandatory halves, in this order. Half ① is a gate (g6), not a
+courtesy — a doc pushed before its source is indexed leaves every `file:line`
+anchor in Op1–Op4 unqueryable.**
+
 ```
-Target: {{KNOWLEDGE_REPO_URL}}  (canonical clone:
+① INDEX the analyzed project into refcode  → gate g6  (BEFORE any doc push)
+   R=/root/.agents/skills/refcode/refcode
+   $R index <slug> "$REPO" --licence <SPDX>        # idempotent; slug = basename lowercased
+   python3 {{REPO_MAP_HOME}}/harness/gates.py g6 --repo "$REPO"
+       # 0 PASS -> continue · 1 FAIL -> re-index then re-run · 2 BLOCKED -> record BLOCKED
+   $R def <a-core-symbol>                          # smoke: must return <path>:<line>
+   # classify is heuristic — if domain is wrong, corpus export -> fix -> corpus add (see references/op5-persist.md)
+
+② PERSIST the artifacts to work-log        → push gate
+Target:   (canonical clone:
         {{KNOWLEDGE_REPO_DIR}} — source of truth for new writes)
 NAMING — distinctive + searchable (core demand):
    <domain>/<subject>作为<role>的<analysis-type>.md
@@ -608,12 +666,15 @@ FLOW (real command chain):
    git push origin main 2>&1 | tail -8 && echo "PUSH_EXIT=${PIPESTATUS[0]}"
 ```
 
+**Q5 PASS = ① g6 PASS AND ② push succeeded.** Either half failing → Q5 FAIL.
+Persist the verdict with `refresh_state.py gate g6 --result PASS|FAIL`.
+
 Rules: work in ONE canonical clone; one distinctive file per deliverable
 (one-subject-per-file = indexable); never push secrets (the repo's remote
 already embeds a PAT — don't add more); don't commit `__pycache__`/temp/run.json.
 
 **After Op5, MUST print the execution summary** covering:
-generated filenames, upload locations (`{{KNOWLEDGE_REPO_URL}}/<domain>/<filename>`),
+generated filenames, upload locations (`/<domain>/<filename>`),
 and the project's core highlights (2-4 distinctive findings from Op2/Op3).
 See `references/op5-persist.md` §Execution summary for the exact template.
 
