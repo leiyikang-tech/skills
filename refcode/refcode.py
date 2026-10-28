@@ -31,6 +31,15 @@ import sys
 import time
 from pathlib import Path
 
+# mechanism-level knowledge system (imported for the `mechanisms` subcommand;
+# keeps refcode.py focused on the symbol index while mechanisms.db holds the
+# design/mechanism/scene-recommendation layer).
+import mechanisms as mechanisms_mod
+
+# Remote-first sync client (imported for the `sync` subcommand; streams derived
+# data to a refcode-server instead of building a local 15GB FTS index).
+import refcode_sync as refcode_sync_mod
+
 # --------------------------------------------------------------------------- #
 # Schema (single source of truth; references/refcode.sql mirrors it)
 # --------------------------------------------------------------------------- #
@@ -81,6 +90,8 @@ CREATE INDEX IF NOT EXISTS idx_refsym_proj  ON ref_symbols(project);
 CREATE INDEX IF NOT EXISTS idx_refsym_qual  ON ref_symbols(qualified_name);
 
 -- body windows: the "body" arm (FTS5 => BM25 for free)
+-- tokenize='trigram' (SQLite>=3.34): native CJK sub-string matching; ASCII
+-- queries <3 chars still match via trigram's automatic %-prefix expansion.
 CREATE VIRTUAL TABLE IF NOT EXISTS ref_body_fts USING fts5(
   project   UNINDEXED,
   file_path,
@@ -88,7 +99,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS ref_body_fts USING fts5(
   win       UNINDEXED,
   line0     UNINDEXED,
   body,
-  tokenize = 'unicode61'
+  tokenize = 'trigram'
 );
 
 -- docs about corpora / projects (mirrors analysis.db's analysis_docs shape)
@@ -99,6 +110,18 @@ CREATE TABLE IF NOT EXISTS ref_docs (
   title     TEXT,
   body      TEXT,
   created_at TEXT
+);
+
+-- design/mechanism-level search surface: repo-map Op2/Op3/Op4 artifacts,
+-- work-log analyses, README-derived descriptions — the content that answers
+-- "what mechanisms / how does it work" questions the code index cannot.
+CREATE VIRTUAL TABLE IF NOT EXISTS ref_docs_fts USING fts5(
+  id        UNINDEXED,
+  slug      UNINDEXED,
+  kind      UNINDEXED,
+  title,
+  body,
+  tokenize = 'trigram'
 );
 """
 
@@ -162,8 +185,11 @@ EXT_TO_LANG = {
     ".sql": "sql",
     ".md": "markdown", ".markdown": "markdown",
 }
-# languages whose files are data/markup, not code -> body-only (no symbol extraction)
-DATA_LANGS = {"json", "yaml", "toml", "html", "css", "markdown"}
+# languages whose files are data/markup, not code -> body-only (no symbol extraction).
+# markdown is deliberately NOT here: .md files (system prompts, doctrine files,
+# design docs) carry the AI mechanisms and design intent, so their headings are
+# extracted as line-anchored symbols (see the markdown branch in symbols()).
+DATA_LANGS = {"json", "yaml", "toml", "html", "css"}
 
 # fallback definition heuristic (used only when the grammar ships no TAGS_QUERY)
 _DEF_HINTS = (
@@ -189,6 +215,7 @@ SKIP_DIRS = {
     "vendor", "third_party", ".venv", "venv", "env", "__pycache__", ".mypy_cache",
     ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", "coverage",
     ".codegraph", ".next", ".nuxt", ".cache", "bazel-out", "Pods", "DerivedData",
+    "data", "Data", "dataset", "datasets", "checkpoints", "Ckpt",
 }
 SKIP_FILE_RE = re.compile(r"(\.min\.(js|css)$|\.map$|\.lock$|package-lock\.json$|"
                           r"Cargo\.lock$|yarn\.lock$|pnpm-lock\.yaml$|\.snap$|"
@@ -260,6 +287,8 @@ class Extractor:
 
     def symbols(self, text: str, lang: str) -> list[dict]:
         """Return [{name, kind, line, end_line, signature}] (1-based lines)."""
+        if lang == "markdown":
+            return self._markdown_symbols(text)
         if not self.available or lang in DATA_LANGS or lang not in GRAMMARS:
             return []
         try:
@@ -332,6 +361,37 @@ class Extractor:
             walk(tree.root_node)
         except Exception:
             pass
+        return out
+
+    _MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+
+    def _markdown_symbols(self, text: str) -> list[dict]:
+        """Line-anchored symbols from markdown headings.
+
+        Each `#`/`##`/… heading becomes a `heading` symbol named after its text,
+        with a real line number — so a doctrine/prompt section is citable as
+        `path:line` exactly like a code symbol.
+        """
+        out: list[dict] = []
+        seen: set[tuple[int, str]] = set()
+        for i, raw in enumerate(text.splitlines(), 1):
+            m = self._MD_HEADING.match(raw)
+            if not m:
+                continue
+            level, name = len(m.group(1)), m.group(2).strip()
+            if not name or len(name) > 200:
+                continue
+            key = (i, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "name": name,
+                "kind": "heading" + (str(level) if level > 1 else ""),
+                "line": i,
+                "end_line": i,
+                "signature": raw.strip()[:200],
+            })
         return out
 
 
@@ -504,12 +564,112 @@ def default_repo_cache() -> Path:
     return Path(os.environ.get("REFCODE_REPOS", str(Path.home() / ".refcode" / "repos")))
 
 
+def _migrate_fts(conn: sqlite3.Connection) -> bool:
+    """Rebuild ref_body_fts with tokenize='trigram' if it was built as unicode61.
+
+    unicode61 does not split CJK, so pure-Chinese body queries returned nothing.
+    trigram (SQLite>=3.34) slices CJK into 3-char grams, enabling native Chinese
+    sub-string search while ASCII terms <3 chars still match via %-expansion.
+
+    The rebuild is a pure SQL copy of the raw FTS content — no re-extraction,
+    no tree-sitter, no re-clone. It copies in SMALL batches with a COMMIT per
+    batch. This matters: a single giant `INSERT..SELECT` runs as one enormous
+    transaction that can exceed timeouts (and leaves only a huge WAL + locked
+    DB if interrupted). Batching keeps each transaction small, so an interrupt
+    preserves already-copied rows and the copy resumes from the current high
+    rowid instead of restarting. Returns True if a rebuild happened.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='ref_body_fts'"
+    ).fetchone()
+    if not row:
+        return False  # table not created yet; fresh DB already uses trigram
+    create_sql = row["sql"] or ""
+    if "trigram" in create_sql:
+        # defensive: clear any stale half-migrated table from an old crash —
+        # once the main table is trigram, a `_new` sibling is always orphaned.
+        conn.execute("DROP TABLE IF EXISTS ref_body_fts_new")
+        conn.commit()
+        return False
+    n = conn.execute("SELECT COUNT(*) FROM ref_body_fts").fetchone()[0]
+    print(f"refcode: rebuilding ref_body_fts unicode61 -> trigram ({n} windows)...",
+          file=sys.stderr)
+
+    # Create the trigram temp table ONLY if missing; if it already exists from
+    # a prior interrupted run, keep it so the copy resumes where it left off
+    # instead of restarting from scratch.
+    new_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='ref_body_fts_new'"
+    ).fetchone()
+    if not new_sql:
+        conn.execute("""
+            CREATE VIRTUAL TABLE ref_body_fts_new USING fts5(
+              project   UNINDEXED,
+              file_path,
+              language  UNINDEXED,
+              win       UNINDEXED,
+              line0     UNINDEXED,
+              body,
+              tokenize = 'trigram'
+            )
+        """)
+        conn.commit()
+
+    # Batch copy with per-batch COMMIT (resumable + small transactions).
+    # NOTE: cursor tracks the highest rowid copied, NOT a row count. Old tables
+    # have sparse rowids (min != 1), so counting rows would re-select already
+    # copied rows and hit FTS5's "rowid must increase" constraint.
+    BATCH = 5000
+    done = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM ref_body_fts_new").fetchone()[0]
+    while True:
+        cur = conn.execute("""
+            INSERT INTO ref_body_fts_new(rowid, project, file_path, language, win, line0, body)
+            SELECT rowid, project, file_path, language, win, line0, body FROM ref_body_fts
+            WHERE rowid > ? ORDER BY rowid LIMIT ?
+        """, (done, BATCH))
+        inserted = cur.rowcount
+        if inserted == 0:
+            break
+        # advance cursor to the max rowid actually inserted in this batch
+        done = conn.execute("SELECT COALESCE(MAX(rowid),0) FROM ref_body_fts_new").fetchone()[0]
+        conn.commit()
+        if done % (BATCH * 20) == 0:
+            print(f"refcode:   copied {done}/{n} windows...", file=sys.stderr)
+
+    # Swap: short transaction, atomic enough (DROP + RENAME on the same handle).
+    conn.execute("DROP TABLE ref_body_fts")
+    conn.execute("ALTER TABLE ref_body_fts_new RENAME TO ref_body_fts")
+    conn.commit()
+    print(f"refcode: ref_body_fts rebuilt with trigram ({n} windows).", file=sys.stderr)
+    return True
+    print(f"refcode: ref_body_fts rebuilt with trigram ({n} windows).", file=sys.stderr)
+    return True
+
+
+def _docs_fts_rebuild(conn: sqlite3.Connection) -> int:
+    """Rebuild ref_docs_fts from ref_docs in one atomic transaction.
+
+    Called after any docs add/delete so the design/mechanism-level search
+    surface always mirrors the doc table. Returns the number of docs indexed.
+    """
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM ref_docs_fts")
+    conn.execute("""
+        INSERT INTO ref_docs_fts(rowid, id, slug, kind, title, body)
+        SELECT id, id, slug, kind, title, body FROM ref_docs
+    """)
+    conn.commit()
+    n = conn.execute("SELECT COUNT(*) FROM ref_docs").fetchone()[0]
+    return n
+
+
 def open_db(path: Path | None = None) -> sqlite3.Connection:
     p = Path(path) if path else default_db()
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate_fts(conn)
     return conn
 
 
@@ -657,16 +817,24 @@ def cmd_index(args, conn: sqlite3.Connection) -> int:
 
 
 def _fts_query(text: str) -> str:
+    # ASCII/underscore tokens -> OR of exact quoted terms (trigram expands
+    # short terms via %-prefix, so 'BM25'/'how' still match).
     toks = re.findall(r"[A-Za-z0-9_]+", text)
-    if not toks:
-        return ""
-    # OR with ranking; quote to neutralise FTS operators
-    return " OR ".join(f'"{t}"' for t in toks[:24])
+    ascii_terms = " OR ".join(f'"{t}"' for t in toks[:24])
+    # CJK runs -> pass through as-is: trigram tokenizer slices them into
+    # 3-char grams and ANDs them, so a whole phrase matches natively.
+    cjk_runs = re.findall(r"[\u4e00-\u9fff]+", text)
+    cjk_terms = " ".join(f'"{c}"' for c in cjk_runs[:24])
+    parts = [p for p in (ascii_terms, cjk_terms) if p]
+    return " OR ".join(parts)
 
 
 def _snippet(body: str, toks: list[str], span: int = 240) -> str:
     low = body.lower()
-    for t in toks:
+    # toks holds ASCII tokens; add any CJK runs so a pure-CJK query still
+    # positions the snippet on the hit rather than the body head.
+    cjk = re.findall(r"[\u4e00-\u9fff]+", " ".join(toks))
+    for t in list(toks) + cjk:
         i = low.find(t.lower())
         if i >= 0:
             a = max(0, i - span // 3)
@@ -696,6 +864,53 @@ def cmd_query(args, conn: sqlite3.Connection) -> int:
             "signature": r["signature"], "score": 1000.0,
         })
 
+    # docs arm (design/mechanism level) - searched FIRST, ranked above code
+    mq = _fts_query(q)
+    if mq:
+        try:
+            for r in conn.execute(
+                    "SELECT id,slug,kind,title,body,bm25(ref_docs_fts) AS s "
+                    "FROM ref_docs_fts WHERE ref_docs_fts MATCH ? "
+                    "ORDER BY s LIMIT ?", (mq, args.k)):
+                hits.append({
+                    "arm": "doc", "project": r["slug"], "file": "ref_docs",
+                    "line": 0, "kind": r["kind"] or "note",
+                    "name": r["title"] or r["slug"],
+                    "snippet": _snippet(r["body"], toks), "score": 100.0,
+                })
+        except sqlite3.OperationalError as e:
+            print(f"warn: docs FTS unavailable: {e}", file=sys.stderr)
+
+    # docs LIKE fallback: trigram needs >=3-char queries, so 2-char CJK words
+    # (通讯/机制/协作) and vocabulary-mismatched phrases miss. ref_docs is small
+    # (hundreds), so a LIKE substring scan for short CJK tokens gives high recall
+    # for design/mechanism questions at trivial cost. Avoids over-matching a bare
+    # 1-char token; 2+ char CJK runs and ASCII tokens are used.
+    if len(doc_hits := [h for h in hits if h["arm"] == "doc"]) < args.k:
+        like_toks = set()
+        for run in re.findall(r"[\u4e00-\u9fff]{2,}", q):
+            for i in range(len(run) - 1):
+                like_toks.add(run[i:i + 2])
+            like_toks.add(run)
+        for t in re.findall(r"[A-Za-z0-9_]{2,}", q):
+            like_toks.add(t)
+        if like_toks:
+            pat = " OR ".join("body LIKE ?" for _ in like_toks)
+            params = [f"%{t}%" for t in like_toks]
+            seen_docs = {h["name"] for h in doc_hits}
+            for r in conn.execute(
+                    f"SELECT id,slug,kind,title,body FROM ref_docs "
+                    f"WHERE {pat} ORDER BY id", params):
+                if r["title"] in seen_docs:
+                    continue
+                seen_docs.add(r["title"])
+                hits.append({
+                    "arm": "doc", "project": r["slug"], "file": "ref_docs",
+                    "line": 0, "kind": r["kind"] or "note",
+                    "name": r["title"] or r["slug"],
+                    "snippet": _snippet(r["body"], toks), "score": 90.0,
+                })
+
     # body arm (BM25)
     mq = _fts_query(q)
     if mq:
@@ -718,11 +933,17 @@ def cmd_query(args, conn: sqlite3.Connection) -> int:
         except sqlite3.OperationalError as e:
             print(f"warn: bad FTS query: {e}", file=sys.stderr)
 
-    # de-dup by (project,file,line); symbol arm wins
+    # de-dup by (project,file,line); docs ranked FIRST (design/mechanism answers
+    # beat code hits), then symbols, then body by bm25 (more negative = better).
+    arm_rank = {"doc": 0, "symbol": 1, "body": 2}
     seen: set[tuple] = set()
     final: list[dict] = []
-    for h in sorted(hits, key=lambda x: (-x["score"] if x["arm"] == "symbol" else x["score"])):
-        k = (h["project"], h["file"], h["line"])
+    for h in sorted(
+        hits,
+        key=lambda x: (arm_rank.get(x["arm"], 9), x["score"] if x["arm"] == "body" else -x["score"]),
+    ):
+        k = (h["project"], h["file"], h["line"]) if h["arm"] != "doc" else (
+            h["project"], h["name"])
         if k in seen:
             continue
         seen.add(k)
@@ -741,6 +962,9 @@ def cmd_query(args, conn: sqlite3.Connection) -> int:
             print(f"[{h['project']}] {h['file']}:{h['line']}  {h['kind']} {h['name']}")
             if h["signature"]:
                 print(f"    {h['signature']}")
+        elif h["arm"] == "doc":
+            print(f"[doc:{h['project']}] ({h['kind']}) {h['name']}")
+            print(f"    {h['snippet']}")
         else:
             print(f"[{h['project']}] {h['file']}:{h['line']}  ({h['language']})")
             print(f"    {h['snippet']}")
@@ -832,6 +1056,44 @@ def cmd_corpus(args, conn: sqlite3.Connection) -> int:
                          ensure_ascii=False, indent=2))
         return 0
     print("usage: refcode corpus {list|add|export}", file=sys.stderr)
+    return 2
+
+
+def cmd_docs(args, conn: sqlite3.Connection) -> int:
+    """Add / list design & mechanism-level docs (repo-map artifacts, analyses).
+
+    `docs add` inserts a doc row (and its trigram FTS row) under a project slug.
+    `docs list` shows what's indexed. These are the content the `query` docs-arm
+    searches first — the "what mechanisms / how does it work" answers.
+    """
+    if args.action == "list":
+        rows = list(conn.execute(
+            "SELECT slug,kind,title,id FROM ref_docs ORDER BY slug,id"))
+        if not rows:
+            print("(no docs indexed)")
+            return 0
+        for r in rows:
+            print(f"[{r['slug']}] {r['kind'] or '-':18} {r['title']}")
+        return 0
+    if args.action == "add":
+        if not args.slug:
+            print("error: docs add needs <slug>", file=sys.stderr)
+            return 2
+        if not args.body and not args.file:
+            print("error: docs add needs --body or --file", file=sys.stderr)
+            return 2
+        body = args.body if args.body is not None else Path(args.file).read_text(
+            encoding="utf-8", errors="replace")
+        now = _now()
+        conn.execute("INSERT INTO ref_docs (slug,kind,title,body,created_at) "
+                     "VALUES (?,?,?,?,?)",
+                     (args.slug, args.kind or "note", args.title or args.slug, body, now))
+        conn.commit()
+        n = _docs_fts_rebuild(conn)
+        print(f"added doc [{args.slug}] {args.title or args.slug} "
+              f"({n} docs now indexed)")
+        return 0
+    print("usage: refcode docs {add|list}", file=sys.stderr)
     return 2
 
 
@@ -977,6 +1239,15 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--from", dest="from_json", default=None)
     pc.set_defaults(func=cmd_corpus)
 
+    pdocs = sub.add_parser("docs", help="add/list design & mechanism-level docs")
+    pdocs.add_argument("action", choices=["add", "list"])
+    pdocs.add_argument("slug", nargs="?", default=None)
+    pdocs.add_argument("--title", default=None)
+    pdocs.add_argument("--kind", default=None)
+    pdocs.add_argument("--body", default=None)
+    pdocs.add_argument("--file", default=None)
+    pdocs.set_defaults(func=cmd_docs)
+
     pr = sub.add_parser("route", help="which corpora answer a target repo (via its lockfiles)")
     pr.add_argument("repo")
     pr.set_defaults(func=cmd_route)
@@ -996,11 +1267,18 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("artifact")
     pv.set_defaults(func=cmd_verify)
 
+    mechanisms_mod.build_mech_parser(sub)
+    refcode_sync_mod.build_sync_parser(sub)
+
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.cmd in ("mechanisms", "sync"):
+        # mechanisms keeps its own mechanisms.db; sync streams to a remote
+        # refcode-server. Neither must force-open the large refcode.db.
+        return args.func(args, None)
     conn = open_db(Path(args.db) if args.db else None)
     try:
         return args.func(args, conn)

@@ -123,6 +123,24 @@ Cite every mechanism claim as `[<slug>] <path>:<line>`. If refcode has no hit fo
 that project, say "not indexed" — do not fall back to memory or the README.
 ```
 
+### 3.2.1 Markdown doctrine files are first-class mechanism carriers
+
+refcode indexes **markdown headings as line-anchored symbols** (the `.md` extractor
+turns every `#`/`##`/… heading into a `heading`/`headingN` symbol with a real line
+number — see `refcode.py::_markdown_symbols`). This matters for AI-agent projects
+whose core mechanisms live in **system prompts and doctrine files**, not code:
+
+- `prompts/**/*.md` — agent behavior, turn rules, voice, anti-patterns
+- `docs/*.md` — design intent, architecture decisions
+- Any "rules" file the running system reads as instructions
+
+Those carry the sharpest mechanisms in an agent stack (e.g. "commit before pose",
+"never announce the target proposition"). Treat them as first-class: `refcode def`
+resolves a section name, and a mechanism claim cites `src/agent/prompts/practice/10-doctrine.md:59` — exactly like a code symbol. When the self-project analysis
+references a prompt/doctrine file, anchor it the same way you anchor code. If the
+extractor misses a section, file a fix to `_markdown_symbols` rather than dropping
+the mechanism from the profile.
+
 
 
 ## 3.3 Anti-Hallucination — THE core discipline

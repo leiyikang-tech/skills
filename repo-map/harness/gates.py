@@ -225,16 +225,61 @@ def gate_g5(repo, stack):
     return 1, f"{stack} build/test failed (rc={code})"
 
 
+def _remote_manifest(slug, host):
+    """Query the remote refcode-server for a project's manifest.
+
+    Returns (symbols:int|None, windows:int|None) or (None, None) if the project
+    is absent. Bypasses the system proxy (ProxyHandler({})) — the remote server
+    is a LAN/private service and proxying LAN traffic through a web proxy breaks
+    it (observed: Privoxy returns its own 500 on gzip bodies). Host may include
+    a path; slug is path-escaped.
+    """
+    import json as _json
+    from urllib.request import build_opener, ProxyHandler
+
+    base = host.rstrip("/")
+    opener = build_opener(ProxyHandler({}))
+    try:
+        with opener.open(f"{base}/projects/{slug}/manifest", timeout=30) as r:
+            data = _json.load(r)
+            proj = data.get("project") or {}
+            return proj.get("symbols"), proj.get("windows")
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
 def gate_g6(repo):
     """Analyzed project itself is indexed into the shared refcode corpus.
-    Returns 0 PASS, 1 FAIL(rework -> must `refcode index`), 2 BLOCKED(refcode
-    missing/unreachable). Queries ref_projects directly (robust to CLI output
-    format) and proves the index is queryable via a live ref_symbols hit.
+    Returns 0 PASS, 1 FAIL(rework -> must index/push), 2 BLOCKED(source of truth
+    missing/unreachable).
+
+    Source of truth is chosen by env: when REFCODE_HOST is set the gate checks
+    the REMOTE refcode-server (remote-first — the analyzed project must be
+    pushed there, no local 15G DB needed); otherwise it queries the local DB
+    (same resolution refcode uses). Either way it proves the index is queryable
+    via a live symbol hit.
 
     Slug convention mirrors refcode: repo basename, lowercased, non-alnum->'-'.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(repo)).lower()).strip("-")
-    # canonical shared DB, same resolution refcode uses
+    host = os.environ.get("REFCODE_HOST")
+    if host:
+        symbols, windows = _remote_manifest(slug, host)
+        if symbols is None:
+            import json as _json
+            from urllib.request import build_opener, ProxyHandler
+            base = host.rstrip("/")
+            opener = build_opener(ProxyHandler({}))
+            try:
+                with opener.open(f"{base}/health", timeout=30) as r:
+                    _json.load(r)
+                return 1, f"'{slug}' not on remote refcode-server -> FAIL; run `refcode sync push {slug} <repo> --host {host}` (repo-map Op5)"
+            except Exception:  # noqa: BLE001
+                return 2, f"remote refcode-server unreachable ({host}) -> BLOCKED"
+        if not symbols or int(symbols) < 1:
+            return 1, f"'{slug}' on remote but 0 symbols -> FAIL"
+        return 0, (f"'{slug}' on remote refcode-server ({symbols} syms / {windows} windows) -> PASS")
+    # fallback: local DB (no remote configured)
     db = os.environ.get("REFCODE_DB") or os.path.expanduser("~/.refcode/refcode.db")
     if not os.path.isfile(db):
         return 2, f"refcode DB not found ({db}) -> BLOCKED; run refcode install/init first"

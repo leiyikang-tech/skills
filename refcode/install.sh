@@ -22,7 +22,17 @@ mkdir -p "$DEST"
 cp -r "$SRC"/. "$DEST"/
 rm -rf "$DEST/.git" "$DEST/install.sh" "$DEST/.venv" "$DEST/__pycache__"
 
-sed -i "s#{{REFCODE_HOME}}#$REFCODE_HOME#g" "$DEST/SKILL.md"
+# Resolve cross-skill DB/work defaults from $HOME (portable; override via env).
+ANALYSIS_DB="${ANALYSIS_DB:-$HOME/.sisyphus/db/analysis.db}"
+REFCODE_DB="${REFCODE_DB:-$HOME/.refcode/refcode.db}"
+MIGRATE_WORK="${MIGRATE_WORK:-$HOME/.refcode/migrate-work}"
+
+sed -i \
+  -e "s#{{REFCODE_HOME}}#$REFCODE_HOME#g" \
+  -e "s#{{ANALYSIS_DB}}#$ANALYSIS_DB#g" \
+  -e "s#{{REFCODE_DB}}#$REFCODE_DB#g" \
+  -e "s#{{MIGRATE_WORK}}#$MIGRATE_WORK#g" \
+  "$DEST/SKILL.md" "$DEST"/mechanisms.py "$DEST"/migrate-existing.py "$DEST"/migrate-to-windows.py
 
 if find "$DEST" -type f \( -name '*.md' -o -name '*.py' -o -name '*.sql' \) \
      ! -name 'install.sh' | xargs grep -l "{{[A-Z_]*}}" 2>/dev/null; then

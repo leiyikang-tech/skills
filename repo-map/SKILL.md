@@ -99,6 +99,13 @@ ungated. **awesome-list mode reuses the same harness** but G1 (analyzable) is th
 only relevant gate (README exists + has content); G3/G4 (AGENTS.md/doc checks) are
 skipped.
 
+**Markdown doctrine files are first-class mechanisms** (refcode maps `.md` headings
+to line-anchored symbols via `_markdown_symbols`): an agent project's system
+prompts and rules (`prompts/**/*.md`) carry its sharpest behavior mechanisms, and a
+mechanism claim cites them as `…/prompts/practice/10-doctrine.md:59` exactly like
+code. Never drop a prompt/doctrine-sourced mechanism from Op2/Op3 for lack of an
+anchor.
+
 ### Quality gates Q1–Q5 — every op gets a hard, verdict-producing gate
 
 **Every operation ends with a gate that MUST produce a verdict (PASS/FAIL).** A

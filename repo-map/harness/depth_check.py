@@ -50,7 +50,8 @@ SOURCE_EXTS = {
 # Group 1 = file path (may contain colons, so use a greedy-but-bounded approach).
 ANCHOR_RE = re.compile(
     r"(?<!\w)"                          # no preceding word char
-    r"([A-Za-z0-9_./~-]+\.(?:tsx|jsx|mjs|cjs|ts|js|py|rs|go|java|kt|rb|php|cs|c|h|cpp|hpp|cc|cxx|sh|sql|json|toml|yaml|yml|md))"
+    r"([A-Za-z0-9_./~-]+\.(?:tsx|jsx|mjs|cjs|json|toml|yaml|yml|java|cpp|hpp|cxx|php|sql|ts|js|py|rs|go|kt|rb|cs|cc|sh|md|c|h))"
+    r"(?![A-Za-z0-9_])"                 # no trailing word char: reject "index.js" immediately followed by more word chars
     r"(?:\s*[:@]\s*(\d+)(?:\s*[-–]\s*(\d+))?(?:\s*[:.]\s*(\d+))?\s*|"
     r"\s+[Ll](\d+)(?:\s*[-–]\s*(\d+))?\s*|"
     r"\s*\b(?:L|line)\s*(\d+)\s*)?"
