@@ -641,6 +641,37 @@ async function mechAddScene(req: Request): Promise<Response> {
   }
 }
 
+async function mechAddMechanism(req: Request): Promise<Response> {
+  if (!mech) return json({ error: "mechanisms db unavailable" }, 503);
+  try {
+    const b = (await req.json()) as {
+      id?: string; name?: string; domain?: string; domain_name?: string;
+      definition?: string; scenes?: string[] | string; pros?: string[] | string;
+      cons?: string[] | string; maturity?: number;
+    };
+    if (!b.id?.trim()) return json({ error: "body needs id" }, 400);
+    const arr = (x?: string[] | string): string =>
+      x === undefined ? "[]" : (Array.isArray(x) ? JSON.stringify(x) : x);
+    mech.query(
+      `INSERT INTO mechanisms
+         (id,name,domain,domain_name,definition,scenes,pros,cons,maturity)
+       VALUES (?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET
+         name=excluded.name, domain=excluded.domain,
+         domain_name=excluded.domain_name, definition=excluded.definition,
+         scenes=excluded.scenes, pros=excluded.pros, cons=excluded.cons,
+         maturity=excluded.maturity`,
+    ).run(
+      b.id.trim(), b.name ?? b.id.trim(), b.domain ?? "", b.domain_name ?? "",
+      b.definition ?? "", arr(b.scenes), arr(b.pros), arr(b.cons),
+      b.maturity ?? 0,
+    );
+    return json({ ok: true, id: b.id.trim() }, 201);
+  } catch (e) {
+    return json({ error: String(e) }, 500);
+  }
+}
+
 // --------------------------------------------------------------------------- //
 // Router
 // --------------------------------------------------------------------------- //
@@ -686,6 +717,7 @@ const server = Bun.serve({
     }
     if (req.method === "POST" && p === "/ingest") return mechIngest(req);
     if (req.method === "POST" && p === "/scene") return mechAddScene(req);
+    if (req.method === "POST" && p === "/mechanisms") return mechAddMechanism(req);
 
     return json({
       error: "not found",
@@ -693,7 +725,7 @@ const server = Bun.serve({
         "GET /health", "POST /projects/<slug>/push", "GET /projects/<slug>/manifest",
         "GET /projects", "GET /query?text=&k=&project=", "GET /def?name=&project=",
         "GET /mechanisms", "GET /mechanisms/<id>", "GET /recommend?scene=&k=",
-        "GET /scenes", "POST /ingest", "POST /scene",
+        "GET /scenes", "POST /ingest", "POST /scene", "POST /mechanisms",
       ],
     }, 404);
   },

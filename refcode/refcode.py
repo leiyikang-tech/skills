@@ -419,6 +419,10 @@ def windows(text: str) -> list[tuple[int, str]]:
 # classify
 # --------------------------------------------------------------------------- #
 DOMAIN_HINTS: list[tuple[str, tuple[str, ...]]] = [
+    ("reverse-engineering", ("disasm", "disassembler", "decompil", "ghidra", "radare",
+                             "rizin", "cutter", "elf", "macho", "pe-format", "objdump",
+                             "capstone", "binary-analysis", "reverse-engineer",
+                             "apk", "dex", "wasmparser", "frida", "angr")),
     ("search-engine", ("search", "lucene", "tantivy", "elasticsearch", "solr",
                        "bm25", "inverted", "clickhouse")),
     ("vector-db", ("qdrant", "hnsw", "faiss", "milvus", "usearch", "annoy",
